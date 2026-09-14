@@ -279,23 +279,38 @@ export async function ozonОстаткиFbs() {
   return `строк ${строки.length}`;
 }
 
+/**
+ * Списки отправлений отдают не больше сотни за раз — на 1000 метод отвечает
+ * 400 «value must be inside range (0, 100]». У остальных методов Ozon предел
+ * другой, поэтому размер пачки здесь свой.
+ */
+const ПАЧКА_ОТПРАВЛЕНИЙ = 100;
+const СТРАНИЦ_ОТПРАВЛЕНИЙ = 500;
+
 async function ozonОтправления(метод, задача, кластер) {
   const с = началоПериода(задача);
   const по = new Date();
   const собрано = [];
   let offset = 0;
-  for (let n = 0; n < 300; n += 1) {
+  let дочитано = false;
+  for (let n = 0; n < СТРАНИЦ_ОТПРАВЛЕНИЙ && !дочитано; n += 1) {
     const ответ = await ozon(метод, {
-      dir: 'ASC', limit: 1000, offset,
+      dir: 'ASC', limit: ПАЧКА_ОТПРАВЛЕНИЙ, offset,
       filter: { since: iso(с), to: iso(по) },
       with: { analytics_data: true },
     });
     const тело = ответ.result || ответ;
     const пачка = Array.isArray(тело) ? тело : (тело.postings || []);
     собрано.push(...пачка);
-    if (пачка.length < 1000) break;
-    offset += 1000;
-    await сон(300);
+    if (пачка.length < ПАЧКА_ОТПРАВЛЕНИЙ) дочитано = true;
+    else {
+      offset += ПАЧКА_ОТПРАВЛЕНИЙ;
+      await сон(300);
+    }
+  }
+  if (!дочитано) {
+    console.warn(`[${метод}] прочитано ${собрано.length} отправлений и упёрлись `
+      + 'в предел страниц: период слишком широкий, сократите «С даты» или «Глубина дней»');
   }
   const отметка = вТаблицу(new Date());
   return собрано.flatMap((о) => {
