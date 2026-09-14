@@ -1,20 +1,42 @@
 import { сохранить } from './sheets.js';
-import { требовать } from './config.js';
-import { запрос, сон, вТаблицу, число, началоПериода, iso } from './http.js';
+import { требовать, доступ } from './config.js';
+import { запрос, сон, вТаблицу, число, началоПериода, iso, локальныйISO } from './http.js';
 
 /* ══════════════════ WILDBERRIES ══════════════════
- * Два разных хоста и два разных токена.
- * Статистика: остатки и заказы FBO, лимит один запрос в минуту.
+ * Три разных хоста и до трёх разных токенов.
+ * Статистика: заказы и продажи FBO, лимит один запрос в минуту.
+ * Аналитика: остатки FBO — отчёт заказывают, ждут и скачивают.
  * Маркетплейс: остатки и задания FBS.
  */
 const WB_СТАТ = 'https://statistics-api.wildberries.ru';
+const WB_АНАЛИТИКА = 'https://seller-analytics-api.wildberries.ru';
 const WB_МАРКЕТ = 'https://marketplace-api.wildberries.ru';
 const WB_КОНТЕНТ = 'https://content-api.wildberries.ru';
 
-const стат = (путь) => {
+/**
+ * Лимит «не чаще раза в минуту» общий на весь аккаунт, а не на метод,
+ * поэтому выдерживаем паузу сами: иначе второй запрос подряд гарантированно 429.
+ */
+const последние = new Map();
+async function неЧаще(ключ, мс) {
+  const было = последние.get(ключ) || 0;
+  const ждать = было + мс - Date.now();
+  if (ждать > 0) await сон(ждать);
+  последние.set(ключ, Date.now());
+}
+
+const стат = async (путь) => {
   const [ключ] = требовать('WB_STATS_KEY');
+  await неЧаще('wb-стат', 61000);
   return запрос(WB_СТАТ + путь, { headers: { Authorization: ключ } },
     { имя: `WB стат ${путь}`, пауза: 20000, попыток: 4 });
+};
+
+/** Аналитике нужен токен с категорией «Аналитика»; чаще всего это отдельный ключ. */
+const аналитика = (путь) => {
+  const ключ = доступ('WB_ANALYTICS_KEY') || требовать('WB_STATS_KEY')[0];
+  return запрос(WB_АНАЛИТИКА + путь, { headers: { Authorization: ключ } },
+    { имя: `WB аналитика ${путь.split('?')[0]}`, пауза: 20000, попыток: 4 });
 };
 
 const маркет = (путь, опции = {}) => {
@@ -25,17 +47,68 @@ const маркет = (путь, опции = {}) => {
   }, { имя: `WB маркет ${путь}` });
 };
 
+/** В отчёте об остатках рядом с настоящими складами лежат итоговые псевдострочки. */
+const ПСЕВДОСКЛАДЫ = new Set([
+  'Всего находится на складах',
+  'В пути до получателей',
+  'В пути возвраты на склад WB',
+]);
+
+/**
+ * Остатки FBO. Метод статистики /api/v1/supplier/stocks отключён (404 «deprecated»),
+ * вместо него отчёт аналитики: заказать — дождаться — скачать.
+ */
 export async function wbОстаткиFbo() {
-  const дата = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 19);
-  const данные = await стат(`/api/v1/supplier/stocks?dateFrom=${дата}`);
+  const п = new URLSearchParams({
+    locale: 'ru',
+    groupByBrand: 'false',
+    groupBySubject: 'false',
+    groupBySa: 'true',
+    groupByNm: 'true',
+    groupByBarcode: 'true',
+    groupBySize: 'true',
+  });
+  await неЧаще('wb-аналитика', 61000);
+  const создан = await аналитика(`/api/v1/warehouse_remains?${п}`);
+  const задание = создан?.data?.taskId || создан?.taskId;
+  if (!задание) {
+    throw new Error(`WB аналитика: отчёт не создан ${JSON.stringify(создан).slice(0, 200)}`);
+  }
+
+  let готов = false;
+  for (let n = 0; n < 30 && !готов; n += 1) {
+    await сон(10000);
+    const ответ = await аналитика(`/api/v1/warehouse_remains/tasks/${задание}/status`);
+    const статус = ответ?.data?.status || ответ?.status || '';
+    if (статус === 'done') готов = true;
+    else if (статус === 'canceled' || статус === 'purged') {
+      throw new Error(`WB аналитика: отчёт ${статус}`);
+    }
+  }
+  if (!готов) throw new Error('WB аналитика: отчёт не готов за 5 минут');
+
+  const отчёт = await аналитика(`/api/v1/warehouse_remains/tasks/${задание}/download`);
+  const записи = Array.isArray(отчёт) ? отчёт : (отчёт?.data || []);
   const отметка = вТаблицу(new Date());
-  const строки = (данные || [])
-    .filter((с) => число(с.quantity) > 0 || число(с.inWayToClient) > 0)
-    .map((с) => [
-      String(с.barcode || ''), с.supplierArticle || '-', с.nmId || '-',
-      с.warehouseName || '-', число(с.quantity),
-      число(с.inWayToClient), число(с.inWayFromClient), отметка,
-    ]);
+  const строки = [];
+  for (const з of записи) {
+    const баркод = String(з.barcode || '');
+    const артикул = з.vendorCode || '-';
+    const nm = з.nmId || '-';
+    for (const с of з.warehouses || []) {
+      const имя = String(с.warehouseName || '');
+      const кол = число(с.quantity);
+      // отчёт даёт «в пути» только суммой по товару, поэтому по складам ставим нули,
+      // а суммы выносим отдельной строкой — иначе итоги по колонкам задвоятся
+      if (ПСЕВДОСКЛАДЫ.has(имя) || !кол) continue;
+      строки.push([баркод, артикул, nm, имя || '-', кол, 0, 0, отметка]);
+    }
+    const кКлиенту = число(з.inWayToClient);
+    const отКлиента = число(з.inWayFromClient);
+    if (кКлиенту || отКлиента) {
+      строки.push([баркод, артикул, nm, 'В пути', 0, кКлиенту, отКлиента, отметка]);
+    }
+  }
   await сохранить('FBO остатки ВБ', строки);
   return `строк ${строки.length}`;
 }
@@ -93,10 +166,10 @@ async function баркодыИзКарточек() {
 }
 
 export async function wbЗаказыFbo(задача) {
-  const с = началоПериода(задача);
-  const заказы = await стат(`/api/v1/supplier/orders?dateFrom=${с.toISOString().slice(0, 19)}&flag=0`);
+  const с = локальныйISO(началоПериода(задача));
+  const заказы = await стат(`/api/v1/supplier/orders?dateFrom=${с}&flag=0`);
   // выкуп берём из отдельного отчёта: в заказах такого признака нет
-  const продажи = await стат(`/api/v1/supplier/sales?dateFrom=${с.toISOString().slice(0, 19)}&flag=0`);
+  const продажи = await стат(`/api/v1/supplier/sales?dateFrom=${с}&flag=0`);
   const выкуплены = new Set((продажи || [])
     .filter((п) => String(п.saleID || '').startsWith('S'))
     .map((п) => String(п.srid || п.odid || '')));
@@ -123,7 +196,7 @@ export async function wbЗаказыFbs(задача) {
       `/api/v3/orders?limit=1000&next=${next}&dateFrom=${Math.floor(с.getTime() / 1000)}`);
     const пачка = ответ.orders || [];
     задания.push(...пачка);
-    if (пачка.length < 1000) break;
+    if (пачка.length < 1000 || !ответ.next) break;
     next = ответ.next;
     await сон(300);
   }

@@ -1,6 +1,21 @@
 import { google } from 'googleapis';
 import { СХЕМЫ, КЛЮЧИ, СНИМКИ } from './schemas.js';
 
+/** Последняя строка, докуда сервис читает и пишет листы. */
+const ПРЕДЕЛ = 20000;
+
+/** Номер колонки → буква: после 26-й одного символа уже не хватает. */
+function колонка(n) {
+  let имя = '';
+  let х = n;
+  while (х > 0) {
+    const о = (х - 1) % 26;
+    имя = String.fromCharCode(65 + о) + имя;
+    х = Math.floor((х - 1) / 26);
+  }
+  return имя || 'A';
+}
+
 const SHEET_ID = process.env.SHEET_ID;
 let клиент;
 
@@ -48,7 +63,7 @@ export async function писать(диапазон, значения) {
 
 async function очистить(лист, колонок, доСтроки) {
   const api = await таблицы();
-  const буква = String.fromCharCode(64 + Math.min(колонок, 26));
+  const буква = колонка(колонок);
   await api.spreadsheets.values.clear({
     spreadsheetId: SHEET_ID,
     range: `'${лист}'!A2:${буква}${Math.max(доСтроки, 2)}`,
@@ -64,17 +79,17 @@ export async function сохранить(лист, строки) {
   const схема = СХЕМЫ[лист];
   if (!схема) throw new Error(`нет схемы для листа «${лист}»`);
   const ширина = схема.length;
-  const буква = String.fromCharCode(64 + ширина);
+  const буква = колонка(ширина);
 
   if (СНИМКИ.has(лист)) {
-    const было = await читать(`'${лист}'!A2:A20000`);
+    const было = await читать(`'${лист}'!A2:A${ПРЕДЕЛ}`);
     await очистить(лист, ширина, было.length + 2);
     if (строки.length) await писать(`'${лист}'!A2`, строки);
     return { всего: строки.length, новых: строки.length };
   }
 
   const ключи = КЛЮЧИ[лист] || [0];
-  const было = await читать(`'${лист}'!A2:${буква}20000`);
+  const было = await читать(`'${лист}'!A2:${буква}${ПРЕДЕЛ}`);
   const индекс = new Map();
   было.forEach((строка, i) => {
     const к = ключи.map((j) => String(строка[j] ?? '')).join('|');
@@ -92,6 +107,10 @@ export async function сохранить(лист, строки) {
       итог.push(строка);
       новых += 1;
     }
+  }
+  if (итог.length + 1 > ПРЕДЕЛ) {
+    console.warn(`[${лист}] строк ${итог.length}, предел чтения ${ПРЕДЕЛ}: `
+      + 'старые строки пора перенести в архив, иначе ключи перестанут находиться');
   }
   if (итог.length) await писать(`'${лист}'!A2`, итог);
   return { всего: итог.length, новых };
