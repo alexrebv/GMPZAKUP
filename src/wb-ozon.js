@@ -29,7 +29,7 @@ const стат = async (путь) => {
   const [ключ] = требовать('WB_STATS_KEY');
   await неЧаще('wb-стат', 61000);
   return запрос(WB_СТАТ + путь, { headers: { Authorization: ключ } },
-    { имя: `WB стат ${путь}`, пауза: 20000, попыток: 4 });
+    { имя: `WB стат ${путь}`, пауза: 61000, попыток: 3 });
 };
 
 /** Аналитике нужен токен с категорией «Аналитика»; чаще всего это отдельный ключ. */
@@ -196,7 +196,7 @@ export async function wbЗаказыFbs(задача) {
       `/api/v3/orders?limit=1000&next=${next}&dateFrom=${Math.floor(с.getTime() / 1000)}`);
     const пачка = ответ.orders || [];
     задания.push(...пачка);
-    if (пачка.length < 1000 || !ответ.next) break;
+    if (пачка.length < 1000 || !ответ.next || ответ.next === next) break;
     next = ответ.next;
     await сон(300);
   }
@@ -299,7 +299,7 @@ async function ozonОтправления(метод, задача, класте
     const ответ = await ozon(метод, {
       dir: 'ASC', limit: ПАЧКА_ОТПРАВЛЕНИЙ, offset,
       filter: { since: iso(с), to: iso(по) },
-      with: { analytics_data: true },
+      with: { analytics_data: true, financial_data: true },
     });
     const тело = ответ.result || ответ;
     const пачка = Array.isArray(тело) ? тело : (тело.postings || []);
@@ -337,28 +337,33 @@ async function ozonОтправления(метод, задача, класте
   const отметка = вТаблицу(new Date());
   const строки = собрано.flatMap((о) => {
     const а = о.analytics_data || {};
+    const ф = о.financial_data || {};
     return (о.products || []).map((т) => [
       о.posting_number, о.order_number || '-',
       вТаблицу(о.created_at || о.in_process_at),
       т.offer_id || '-', String(т.sku), число(т.quantity), число(т.price),
       о.status || '-',
-      кластер ? (а.cluster_to || а.warehouse_name || '-') : (а.warehouse_name || '-'),
+      // кластер приходит только в financial_data, а склад у FBS зовётся warehouse,
+      // а не warehouse_name: перебираем оба, чтобы не зависеть от схемы метода
+      кластер
+        ? (ф.cluster_to || а.cluster_to || а.warehouse_name || а.warehouse || '-')
+        : (а.warehouse_name || а.warehouse || '-'),
       а.region || '-', отметка,
     ]);
   });
   return { строки, заметка };
 }
 
-export async function ozonЗаказыFbo(задача) {
-  const { строки, заметка } = await ozonОтправления('/v3/posting/fbo/list', задача, true);
-  const итог = await сохранить('Заказы ОЗОН FBO', строки);
-  return `строк ${строки.length}, новых ${итог.новых}, изменено ${итог.изменено}`
-       + `${итог.заметка}${заметка}`;
+async function ozonЗаказы(метод, лист, задача, кластер) {
+  const { строки, заметка } = await ozonОтправления(метод, задача, кластер);
+  const итог = await сохранить(лист, строки);
+  const текст = `строк ${строки.length}, новых ${итог.новых}, изменено ${итог.изменено}`
+              + `${итог.заметка}`;
+  // прочитали не всё — прогон неполный. Молчать нельзя: успешная отметка сдвинет
+  // водяной знак, и недочитанные отправления не вернутся уже никогда
+  if (заметка) throw new Error(`${текст}${заметка}`);
+  return текст;
 }
 
-export async function ozonЗаказыFbs(задача) {
-  const { строки, заметка } = await ozonОтправления('/v4/posting/fbs/list', задача, false);
-  const итог = await сохранить('Заказы ОЗОН FBS', строки);
-  return `строк ${строки.length}, новых ${итог.новых}, изменено ${итог.изменено}`
-       + `${итог.заметка}${заметка}`;
-}
+export const ozonЗаказыFbo = (з) => ozonЗаказы('/v3/posting/fbo/list', 'Заказы ОЗОН FBO', з, true);
+export const ozonЗаказыFbs = (з) => ozonЗаказы('/v4/posting/fbs/list', 'Заказы ОЗОН FBS', з, false);
