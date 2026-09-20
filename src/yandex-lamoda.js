@@ -1,6 +1,6 @@
 import { сохранить } from './sheets.js';
 import { требовать } from './config.js';
-import { запрос, сон, вТаблицу, число, началоПериода } from './http.js';
+import { запрос, сон, вТаблицу, число, началоПериода, период, локальныйISO } from './http.js';
 
 /* ══════════════════ ЯНДЕКС МАРКЕТ ══════════════════
  * FBY и FBS — разные кампании. Если подставить чужой номер,
@@ -77,25 +77,47 @@ export const ямОстаткиFbo = () =>
 export const ямОстаткиFbs = () =>
   ямОстатки(требовать('YM_CAMPAIGN_FBS')[0], 'FBS остатки Яндекс', false);
 
+/**
+ * Метод заказов не принимает интервал длиннее 30 суток: на 33 днях отвечает
+ * 400 «Invalid filters: interval between dates». Режем период на окна по 28 дней
+ * с запасом. Заодно: заказы, доставленные или отменённые больше 30 дней назад,
+ * этот метод не отдаёт вовсе — глубже месяца история отсюда не берётся.
+ */
+const ШАГ_ЯМ = 28 * 24 * 3600 * 1000;
+
 async function ямЗаказы(кампания, лист, задача) {
-  const с = началоПериода(задача);
-  const по = new Date();
+  const { с, по } = период(задача);
   const заказы = [];
-  let токен = '';
-  for (let n = 0; n < 400; n += 1) {
-    const п = new URLSearchParams({
-      fromDate: датаЯМ(с), toDate: датаЯМ(по), limit: '50',
-    });
-    if (токен) п.set('page_token', токен);
-    const ответ = await ям(кампания, `/orders?${п}`);
-    const тело = ответ.result || ответ;
-    const пачка = тело.orders || [];
-    заказы.push(...пачка);
-    const след = тело.paging?.nextPageToken;
-    if (!след || след === токен || !пачка.length) break;
-    токен = след;
+  const виденные = new Set();
+  let окон = 0;
+
+  for (let окноС = new Date(с); окноС.getTime() <= по.getTime();) {
+    const окноПо = new Date(Math.min(окноС.getTime() + ШАГ_ЯМ, по.getTime()));
+    окон += 1;
+    let токен = '';
+    for (let n = 0; n < 400; n += 1) {
+      const п = new URLSearchParams({
+        fromDate: датаЯМ(окноС), toDate: датаЯМ(окноПо), limit: '50',
+      });
+      if (токен) п.set('page_token', токен);
+      const ответ = await ям(кампания, `/orders?${п}`);
+      const тело = ответ.result || ответ;
+      const пачка = тело.orders || [];
+      for (const з of пачка) {
+        const ид = String(з.id ?? '');
+        if (ид && виденные.has(ид)) continue;
+        if (ид) виденные.add(ид);
+        заказы.push(з);
+      }
+      const след = тело.paging?.nextPageToken;
+      if (!след || след === токен || !пачка.length) break;
+      токен = след;
+      await сон(300);
+    }
+    окноС = new Date(окноПо.getTime() + 24 * 3600 * 1000);
     await сон(300);
   }
+
   const отметка = вТаблицу(new Date());
   const строки = заказы
     .filter((з) => з.fake !== true)
@@ -106,7 +128,8 @@ async function ямЗаказы(кампания, лист, задача) {
       з.delivery?.shipments?.[0]?.warehouse?.name || '-', отметка,
     ]));
   const итог = await сохранить(лист, строки);
-  return `заказов ${заказы.length}, строк ${строки.length}, новых ${итог.новых}`;
+  return `заказов ${заказы.length} за окон ${окон}, строк ${строки.length}, `
+       + `новых ${итог.новых}, изменено ${итог.изменено}${итог.заметка}`;
 }
 
 export const ямЗаказыFbo = (з) =>
@@ -167,7 +190,7 @@ async function лмЗаказы(лист, схема, задача) {
   for (let n = 0; n < 300; n += 1) {
     const п = new URLSearchParams({
       page: String(страница), limit: '200',
-      created_from: с.toISOString().slice(0, 10),
+      created_from: локальныйISO(с).slice(0, 10),
       fulfillment_type: схема,
     });
     const ответ = await запрос(`${LM_B2B}/v1/orders?${п}`, {
@@ -187,7 +210,8 @@ async function лмЗаказы(лист, схема, задача) {
     з.delivery?.region || з.region || '-', отметка,
   ]));
   const итог = await сохранить(лист, строки);
-  return `заказов ${заказы.length}, строк ${строки.length}, новых ${итог.новых}`;
+  return `заказов ${заказы.length}, строк ${строки.length}, `
+       + `новых ${итог.новых}, изменено ${итог.изменено}${итог.заметка}`;
 }
 
 export const лмЗаказыFbo = (з) => лмЗаказы('Заказы Ламода FBO', 'fbo', з);
