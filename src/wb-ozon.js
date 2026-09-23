@@ -1,6 +1,7 @@
 import { сохранить } from './sheets.js';
 import { требовать, доступ } from './config.js';
-import { запрос, сон, вТаблицу, число, началоПериода, период, iso, локальныйISO } from './http.js';
+import { запрос, сон, вТаблицу, число, началоПериода, период, границаИстории,
+  текстом, iso, локальныйISO } from './http.js';
 
 /* ══════════════════ WILDBERRIES ══════════════════
  * Три разных хоста и до трёх разных токенов.
@@ -88,7 +89,7 @@ export async function wbОстаткиFbo() {
       if (!доступно && !кКлиенту && !отКлиента) continue;
       const к = поРазмерам.get(String(о.chrtId)) || {};
       строки.push([
-        к.баркод || '', к.артикул || '-', о.nmId || '-',
+        текстом(к.баркод), текстом(к.артикул) || '-', о.nmId || '-',
         о.warehouseName || 'Склад WB',
         доступно, кКлиенту, отКлиента, отметка,
       ]);
@@ -121,7 +122,7 @@ export async function wbОстаткиFbs() {
       for (const с of ответ.stocks || []) {
         if (!число(с.amount)) continue;
         const найден = пачка.find((б) => б.баркод === String(с.sku));
-        строки.push([String(с.sku), найден?.артикул || '-',
+        строки.push([текстом(с.sku), текстом(найден?.артикул) || '-',
           склад.name || String(склад.id), число(с.amount), отметка]);
       }
       await сон(300);
@@ -194,8 +195,8 @@ export async function wbЗаказыFbo(задача) {
     .map((п) => String(п.srid || п.odid || '')));
   const отметка = вТаблицу(new Date());
   const строки = (заказы || []).map((з) => [
-    String(з.srid || з.odid || ''), вТаблицу(з.date), з.supplierArticle || '-',
-    з.nmId || '-', String(з.barcode || ''), 1,
+    String(з.srid || з.odid || ''), вТаблицу(з.date), текстом(з.supplierArticle) || '-',
+    з.nmId || '-', текстом(з.barcode), 1,
     число(з.finishedPrice ?? з.totalPrice), з.warehouseName || '-',
     з.oblastOkrugName || з.regionName || '-',
     з.isCancel ? 'да' : '-',
@@ -232,8 +233,8 @@ export async function wbЗаказыFbs(задача) {
   const отметка = вТаблицу(new Date());
   const строки = задания.map((з) => {
     const ст = статусы.get(з.id) || {};
-    return [String(з.id), вТаблицу(з.createdAt), з.article || '-',
-      String(з.skus?.[0] || ''), 1, число(з.convertedPrice) / 100,
+    return [String(з.id), вТаблицу(з.createdAt), текстом(з.article) || '-',
+      текстом(з.skus?.[0]), 1, число(з.convertedPrice) / 100,
       ст.wbStatus || '-', ст.supplierStatus || '-',
       з.warehouseId || '-', отметка];
   });
@@ -264,7 +265,7 @@ export async function ozonОстаткиFbo() {
       { limit: 1000, offset, warehouse_type: 'FBO' });
     const пачка = (ответ.result || ответ).rows || [];
     for (const с of пачка) {
-      строки.push([с.item_code || '-', String(с.sku ?? ''), с.warehouse_name || '-',
+      строки.push([текстом(с.item_code) || '-', String(с.sku ?? ''), с.warehouse_name || '-',
         с.cluster_name || с.warehouse_name || '-', число(с.free_to_sell_amount),
         число(с.promised_amount), число(с.reserved_amount), отметка]);
     }
@@ -288,7 +289,7 @@ export async function ozonОстаткиFbs() {
     for (const т of товары) {
       for (const с of т.stocks || []) {
         if (с.type && с.type !== 'fbs') continue;
-        строки.push([т.offer_id || '-', String(т.product_id ?? ''), 'Склад продавца',
+        строки.push([текстом(т.offer_id) || '-', String(т.product_id ?? ''), 'Склад продавца',
           число(с.present), число(с.reserved), отметка]);
       }
     }
@@ -441,7 +442,7 @@ export async function ozonОтправления(метод, задача, кл�
     return (о.products || []).map((т) => [
       о.posting_number, о.order_number || '-',
       вТаблицу(датаОтправления(о)),
-      т.offer_id || '-', String(т.sku), число(т.quantity), число(т.price),
+      текстом(т.offer_id) || '-', String(т.sku), число(т.quantity), число(т.price),
       о.status || '-',
       // кластер приходит только в financial_data, а склад у FBS зовётся warehouse,
       // а не warehouse_name: перебираем оба, чтобы не зависеть от схемы метода
@@ -471,9 +472,13 @@ async function ozonЗаказы(метод, лист, задача, класте
  * Возвраты FBO и FBS приходят одним методом, поэтому лист под них один, а схема
  * конкретного возврата пишется в колонку «Схема».
  *
- * Фильтра по датам нет намеренно. Метод принимает только один фильтр-дату за
- * запрос, а от листа нужна полная картина, поэтому каждый прогон перечитывает
- * все возвраты целиком: «Глубина дней» и «С даты» этой задачей не читаются.
+ * Период берётся из «С даты» как есть: весь отрезок от неё до сегодня, каждый
+ * прогон заново. Глубина и водяной знак тут не участвуют — метод принимает
+ * только один фильтр-дату за запрос, и дробить отрезок нечем. Пустая «С даты»
+ * значит «все возвраты, какие есть».
+ *
+ * Фильтруем по дате возврата: это та же дата, что уходит в колонку
+ * «Дата возврата», поэтому период в книге совпадает с тем, что видно в листе.
  *
  * Листается `last_id` — идентификатор последнего возврата на странице.
  */
@@ -486,7 +491,12 @@ const СТРАНИЦ_ВОЗВРАТОВ = 200;    // сто тысяч возв�
 const деньги = (з) => число(з && з.price);
 
 /** Сбор и раскладка по колонкам, без записи в книгу: так его проверяет проба. */
-export async function ozonВозвратыСтроки() {
+export async function ozonВозвратыСтроки(задача) {
+  const с = границаИстории(задача || {});
+  const фильтр = с
+    ? { logistic_return_date: { time_from: iso(с), time_to: iso(new Date()) } }
+    : null;
+
   const собрано = [];
   const виденные = new Set();
   let last = 0;
@@ -494,9 +504,11 @@ export async function ozonВозвратыСтроки() {
 
   for (let n = 0; n < СТРАНИЦ_ВОЗВРАТОВ && !дочитано; n += 1) {
     await сон(ПАУЗА_OZON);
-    const ответ = await ozon(ВОЗВРАТЫ, { limit: ПАЧКА_ВОЗВРАТОВ, last_id: last });
-    const тело = ответ.result || ответ;
-    const пачка = тело.returns || [];
+    const тело = { limit: ПАЧКА_ВОЗВРАТОВ, last_id: last };
+    if (фильтр) тело.filter = фильтр;
+    const ответ = await ozon(ВОЗВРАТЫ, тело);
+    const ответТело = ответ.result || ответ;
+    const пачка = ответТело.returns || [];
 
     for (const в of пачка) {
       const ключ = String(в.id ?? '');
@@ -505,8 +517,10 @@ export async function ozonВозвратыСтроки() {
       собрано.push(в);
     }
 
-    if (!пачка.length || тело.has_next === false) { дочитано = true; break; }
-    if (тело.has_next === undefined && пачка.length < ПАЧКА_ВОЗВРАТОВ) { дочитано = true; break; }
+    if (!пачка.length || ответТело.has_next === false) { дочитано = true; break; }
+    if (ответТело.has_next === undefined && пачка.length < ПАЧКА_ВОЗВРАТОВ) {
+      дочитано = true; break;
+    }
 
     const хвост = Number(пачка[пачка.length - 1].id);
     // та же беда, что была у отправлений: курсор, который не двигает выборку,
@@ -529,12 +543,12 @@ export async function ozonВозвратыСтроки() {
     return [
       String(в.id ?? ''), в.posting_number || '-', в.order_number || '-',
       в.schema || '-',
-      т.offer_id || '-', String(т.sku ?? ''), т.name || '-',
+      текстом(т.offer_id) || '-', String(т.sku ?? ''), текстом(т.name) || '-',
       число(т.quantity), деньги(т.price),
       в.return_reason_name || '-', в.type || '-',
       вид.status?.display_name || '-', вТаблицу(вид.change_moment),
       вТаблицу(лог.return_date),
-      в.place?.name || '-', лог.barcode || '-',
+      в.place?.name || '-', текстом(лог.barcode) || '-',
       отметка,
     ];
   });
@@ -542,11 +556,12 @@ export async function ozonВозвратыСтроки() {
   return строки;
 }
 
-export async function ozonВозвраты() {
-  const строки = await ozonВозвратыСтроки();
+export async function ozonВозвраты(задача) {
+  const с = границаИстории(задача || {});
+  const строки = await ozonВозвратыСтроки(задача);
   const итог = await сохранить(ЛИСТ_ВОЗВРАТОВ, строки);
   return `возвратов ${строки.length}, новых ${итог.новых}, изменено ${итог.изменено}`
-       + `${итог.заметка}`;
+       + `${итог.заметка}, период ${с ? `с ${вТаблицу(с).slice(0, 10)}` : 'весь'}`;
 }
 
 export const ozonЗаказыFbo = (з) => ozonЗаказы('/v3/posting/fbo/list', 'Заказы ОЗОН FBO', з, true);
