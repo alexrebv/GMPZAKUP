@@ -7,6 +7,8 @@ process.env.TZ = process.env.TZ || 'Europe/Moscow';
 process.env.OZON_CLIENT_ID = 'test-client';
 process.env.OZON_API_KEY = 'test-key';
 
+const серийно = (г, м, д) => (Date.UTC(г, м - 1, д) - Date.UTC(1899, 11, 30)) / 86400000;
+
 const ПОЛЯ = new Set(['filter', 'limit', 'last_id']);
 /** Метод принимает только один фильтр-дату за запрос, остальное — ошибка. */
 const ДАТЫ = ['logistic_return_date', 'storage_tariffication_start_date', 'visual_status_change_moment'];
@@ -68,9 +70,12 @@ async function собрать(опции, задача = {}) {
   const { сервер, запросы } = поддельныйOzon(опции);
   await new Promise((r) => сервер.listen(0, '127.0.0.1', r));
   process.env.OZON_API_URL = `http://127.0.0.1:${сервер.address().port}`;
-  const { ozonВозвратыСтроки } = await import(`../src/wb-ozon.js?${Math.random()}`);
   try {
-    return { строки: await ozonВозвратыСтроки(задача), запросы };
+    // импорт внутри try: сорвись он снаружи, поддельный сервер остался бы
+    // открытым и прогон пробы повис бы вместо понятной ошибки
+    const { ozonВозвратыСтроки } = await import(`../src/wb-ozon.js?${Math.random()}`);
+    const { строки, мимо } = await ozonВозвратыСтроки(задача);
+    return { строки, мимо, запросы };
   } finally {
     сервер.close();
   }
@@ -143,4 +148,16 @@ test('«С даты» уходит фильтром по дате возврат
 test('пустая «С даты» — фильтра нет, берём все возвраты', async () => {
   const { запросы } = await собрать({ всего: 40 }, { сдаты: '' });
   assert.ok(!('filter' in запросы[0]));
+});
+
+test('возврат раньше запрошенной даты виден в отчёте как непримененный фильтр', async () => {
+  // поддельный метод фильтр игнорирует, поэтому отдаёт всё подряд
+  const { строки, мимо } = await собрать({ всего: 3 }, { сдаты: серийно(2026, 9, 15) });
+  assert.equal(строки.length, 3);
+  assert.equal(мимо, 3, 'возвраты вне периода должны быть посчитаны');
+});
+
+test('без «С даты» ничего не считаем мимо периода', async () => {
+  const { мимо } = await собрать({ всего: 3 });
+  assert.equal(мимо, 0);
 });
