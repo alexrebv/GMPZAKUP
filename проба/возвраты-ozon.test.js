@@ -70,8 +70,10 @@ async function собрать(опции, задача = {}) {
   const { сервер, запросы } = поддельныйOzon(опции);
   await new Promise((r) => сервер.listen(0, '127.0.0.1', r));
   process.env.OZON_API_URL = `http://127.0.0.1:${сервер.address().port}`;
-  const { ozonВозвратыСтроки } = await import(`../src/wb-ozon.js?${Math.random()}`);
   try {
+    // импорт внутри try: сорвись он снаружи, поддельный сервер остался бы
+    // открытым и прогон пробы повис бы вместо понятной ошибки
+    const { ozonВозвратыСтроки } = await import(`../src/wb-ozon.js?${Math.random()}`);
     const { строки, мимо } = await ozonВозвратыСтроки(задача);
     return { строки, мимо, запросы };
   } finally {
