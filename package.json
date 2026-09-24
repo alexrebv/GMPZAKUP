@@ -8,7 +8,9 @@
   "scripts": {
     "start": "node src/index.js",
     "once": "node src/index.js --once",
-    "test": "node --test проба/*.test.js"
+    "test": "node --test проба/*.test.js",
+    "свод": "node scripts/свод.mjs",
+    "проверить-ссылки": "node scripts/проверить-ссылки.mjs"
   },
   "dependencies": { "googleapis": "^144.0.0" }
 }
