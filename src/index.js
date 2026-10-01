@@ -10,6 +10,7 @@ const ОБРАБОТЧИКИ = {
   'Заказы ВБ FBO': wbOzon.wbЗаказыFbo,
   'Заказы ВБ FBS': wbOzon.wbЗаказыFbs,
   'FBS Возвраты': wbOzon.wbВозвраты,
+  'WB заказы проверка': wbOzon.wbЛентаЗаказов,
 
   'FBO остатки ОЗОН': wbOzon.ozonОстаткиFbo,
   'FBS остатки ОЗОН': wbOzon.ozonОстаткиFbs,
