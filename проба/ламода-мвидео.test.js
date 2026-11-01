@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import '../src/tz.js';
 import { лмСтрокиЗаказа, схемаПоОстаткам, продавецИзТокена } from '../src/lamoda.js';
-import { мвСтрокаЗаказа, мвЦена, мвОбход } from '../src/mvideo.js';
+import { мвСтрокаЗаказа, мвЦена, мвОбход, заголовки, телоСтраницы } from '../src/mvideo.js';
 import { СХЕМЫ } from '../src/schemas.js';
 
 const без = (з) => String(з).replace(/^'/, '');
@@ -62,17 +62,18 @@ test('М.Видео: цена из копеек, количество по эк�
 test('М.Видео: обход по курсору доходит до конца и не крутится на месте', async () => {
   const прежний = globalThis.fetch;
   process.env.MVIDEO_API_KEY = 'k';
-  const страницы = { null: { stocks: [1, 2], next_cursor: 'a' }, a: { stocks: [3], next_cursor: '' } };
+  const страницы = { '': { stocks: [1, 2], next_cursor: 'a' }, a: { stocks: [3], next_cursor: '' } };
   const курсоры = [];
-  globalThis.fetch = async (_у, о) => {
+  globalThis.fetch = async (у, о) => {
     const тело = JSON.parse(о.body);
     курсоры.push(тело.cursor);
     assert.equal(о.headers['api-key'], 'k');
+    assert.equal(о.headers.Authorization, undefined, `на ${у} ключ — только в api-key`);
     return new Response(JSON.stringify(страницы[String(тело.cursor)]), { status: 200 });
   };
   try {
     assert.deepEqual(await мвОбход('/v1/product/stock/info', 'stocks'), [1, 2, 3]);
-    assert.deepEqual(курсоры, [null, 'a']);
+    assert.deepEqual(курсоры, ['', 'a']);
     globalThis.fetch = async () => new Response(JSON.stringify({ stocks: [1], next_cursor: 'same' }), { status: 200 });
     await assert.rejects(мвОбход('/v1/product/stock/info', 'stocks'), /курсор не двигает/);
     globalThis.fetch = async () => new Response(JSON.stringify({ oops: 1 }), { status: 200 });
@@ -82,3 +83,43 @@ test('М.Видео: обход по курсору доходит до конц
   }
 });
 
+
+test('М.Видео: Bearer — только для omniom, на шлюзе М.Видео — один api-key', () => {
+  assert.equal(заголовки('https://omni-net.sellers.mvideo.ru', 'k').Authorization, undefined);
+  assert.equal(заголовки('https://omni-net.sellers.mvideo.ru', 'k')['api-key'], 'k');
+  assert.equal(заголовки('https://api.omniom.ru', 'k').Authorization, 'Bearer k');
+});
+
+test('М.Видео: тело страницы — вид метода плюс курсор со второй страницы', () => {
+  assert.deepEqual(телоСтраницы(0, {}, ''), { filter: {}, cursor: '', limit: 100 });
+  assert.deepEqual(телоСтраницы(1, {}, ''), { filter: {}, limit: 100 });
+  assert.deepEqual(телоСтраницы(2, { a: 1 }, 'x'), { filter: { a: 1 }, cursor: 'x' });
+});
+
+test('М.Видео: на «HTTP 400» первая страница пробует другой вид тела и листает им же', async () => {
+  const тела = [];
+  const вызов = async (_п, тело) => {
+    тела.push(тело);
+    if ('cursor' in тело && тело.cursor === '') throw new Error('М.Видео: HTTP 400 {"message":"Некорректный запрос"}');
+    if (!тело.cursor) return { mappings: [{ offer_id: 'A' }], next_cursor: 'c1' };
+    return { mappings: [{ offer_id: 'B' }], next_cursor: '' };
+  };
+  const итог = await мвОбход('/проба/400', 'mappings', {}, вызов);
+  assert.deepEqual(итог.map((м) => м.offer_id), ['A', 'B']);
+  assert.deepEqual(тела, [
+    { filter: {}, cursor: '', limit: 100 },
+    { filter: {}, limit: 100 },
+    { filter: {}, limit: 100, cursor: 'c1' },
+  ]);
+  // вид запомнен: второй обход сразу без пустого курсора
+  тела.length = 0;
+  await мвОбход('/проба/400', 'mappings', {}, вызов);
+  assert.deepEqual(тела[0], { filter: {}, limit: 100 });
+});
+
+test('М.Видео: если 400 на всех видах тела — ошибка со всей историей', async () => {
+  const вызов = async () => { throw new Error('М.Видео: HTTP 400 {}'); };
+  await assert.rejects(мвОбход('/проба/всё400', 'mappings', {}, вызов), /HTTP 400.*вид тела 1, 2 — тоже 400/);
+  const чужая = async () => { throw new Error('М.Видео: HTTP 500 {}'); };
+  await assert.rejects(мвОбход('/проба/500', 'mappings', {}, чужая), (е) => !/вид тела/.test(е.message));
+});

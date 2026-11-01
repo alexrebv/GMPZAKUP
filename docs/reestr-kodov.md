@@ -105,7 +105,8 @@
 | `POST /v1/order/dbs/list` | заказы DBS по дате создания | `mvideo.js` |
 | `POST /v1/product/mapping/list` | артикул ↔ ID товара для каталога | `mvideo.js` |
 
-Ключ — в `api-key` и в `Authorization: Bearer`, плюс обязательный `User-Agent`.
+Ключ — только в `api-key` (Bearer — лишь для запасного `api.omniom.ru`), плюс обязательный `User-Agent`.
+Первая страница на «HTTP 400» пробуется в трёх видах тела; прошедший вид запоминается.
 Адресов два (`omni-net.sellers.mvideo.ru`, `api.omniom.ru`), первый ответивший запоминается.
 Схемы FBO в API нет.
 
