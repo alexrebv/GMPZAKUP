@@ -169,6 +169,11 @@ async function баркодыИзКарточек() {
             артикул: к.vendorCode || '-',
             nmID: к.nmID,
             chrtID: размер.chrtID,
+            // для каталога: размер, название, бренд и предмет карточки
+            размер: String(размер.techSize ?? размер.wbSize ?? '').trim(),
+            название: к.title || '',
+            бренд: к.brand || '',
+            предмет: к.subjectName || '',
           });
         }
       }
@@ -181,6 +186,9 @@ async function баркодыИзКарточек() {
   карточки = { время: Date.now(), список: итог };
   return итог;
 }
+
+/** Все баркоды карточек ВБ по порядку: размер за размером, баркод за баркодом. */
+export const карточкиВБ = () => баркодыИзКарточек();
 
 /** Баркод → карточка: отчёт о возвратах артикула продавца не отдаёт. */
 async function карточкиПоБаркоду() {
@@ -617,7 +625,7 @@ export async function wbЛентаЗаказов(задача) {
 // не проверить, а меняются они, как выяснилось, вместе с поколением метода
 const OZ = process.env.OZON_API_URL || 'https://api-seller.ozon.ru';
 
-function ozon(метод, тело) {
+export function ozon(метод, тело) {
   const [clientId, apiKey] = требовать('OZON_CLIENT_ID', 'OZON_API_KEY');
   return запрос(OZ + метод, {
     method: 'POST',
@@ -957,3 +965,44 @@ export async function ozonВозвраты(задача) {
 
 export const ozonЗаказыFbo = (з) => ozonЗаказы('/v3/posting/fbo/list', 'Заказы ОЗОН FBO', з, true);
 export const ozonЗаказыFbs = (з) => ozonЗаказы('/v4/posting/fbs/list', 'Заказы ОЗОН FBS', з, false);
+
+/**
+ * Товары Ozon для каталога: список идёт по `last_id`, подробности — пачками
+ * по тысяче. Штрихкодов у товара бывает несколько; SKU в новом поколении
+ * метода лежит в `sources`, в старом — прямо в товаре.
+ */
+const ПАЧКА_ТОВАРОВ = 1000;
+
+export async function ozonТовары() {
+  const ид = [];
+  let lastId = '';
+  for (let n = 0; ; n += 1) {
+    if (n >= 200) throw new Error(`Ozon товары: прочитано ${ид.length} и упёрлись в предел страниц`);
+    const ответ = await ozon('/v3/product/list',
+      { filter: { visibility: 'ALL' }, last_id: lastId, limit: ПАЧКА_ТОВАРОВ });
+    const тело = ответ.result || ответ;
+    if (!Array.isArray(тело.items)) throw new Error(`Ozon товары: ответ без списка на странице ${n + 1}`);
+    ид.push(...тело.items.map((т) => т.product_id).filter(Boolean));
+    if (!тело.last_id || тело.items.length < ПАЧКА_ТОВАРОВ) break;
+    if (тело.last_id === lastId) throw new Error(`Ozon товары: last_id не двигает выборку`);
+    lastId = тело.last_id;
+    await сон(300);
+  }
+  const товары = [];
+  for (let i = 0; i < ид.length; i += ПАЧКА_ТОВАРОВ) {
+    const ответ = await ozon('/v3/product/info/list', { product_id: ид.slice(i, i + ПАЧКА_ТОВАРОВ) });
+    const пачка = ответ.items || ответ.result?.items;
+    if (!Array.isArray(пачка)) throw new Error('Ozon товары: подробности пришли без списка');
+    for (const т of пачка) {
+      const sku = т.sku || т.sources?.find((и) => и.sku)?.sku || т.fbo_sku || т.fbs_sku || '';
+      товары.push({
+        артикул: String(т.offer_id ?? '').trim(),
+        ид: String(sku || ''),
+        баркоды: [...(т.barcodes || []), ...(т.barcode ? [т.barcode] : [])].map(String),
+        название: т.name || '',
+      });
+    }
+    await сон(300);
+  }
+  return товары.filter((т) => т.артикул);
+}

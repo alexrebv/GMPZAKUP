@@ -70,7 +70,7 @@ npm run проверить-ссылки           # не врёт ли доку�
 
 ```
 Google Таблица «Настройки»              Маркетплейсы
-     строки 15–61                 WB · Ozon · Яндекс · Ламода
+     строки 15–62                 WB · Ozon · Яндекс · Ламода
           │                                  │
           ▼                                  ▼
     config.js ──► index.js ──► коннекторы ──► sheets.js ──► листы книги
@@ -146,7 +146,7 @@ Google Таблица «Настройки»              Маркетплейс
 |---|---|---|
 | Имя листа | `Настройки` | `лист` |
 | Параметры | `A3:B12` | `параметрыОт` / `параметрыДо` |
-| Блок задач | `A15:G61` | `задачиОт` / `задачиДо` |
+| Блок задач | `A15:G62` | `задачиОт` / `задачиДо` |
 | Дочитывается ниже блока | ещё 5 строк | `задачиЗапас` |
 
 Пять строк ниже блока дочитываются не ради работы, а ради предупреждения: задача,
@@ -234,8 +234,8 @@ Google Таблица «Настройки»              Маркетплейс
 | `WB_КОНТЕНТ` | `https://content-api.wildberries.ru` | `WB_CONTENT_URL` |
 | `OZ` | `https://api-seller.ozon.ru` | `OZON_API_URL` |
 | `ЯМ` | `https://api.partner.market.yandex.ru` | нет |
-| `LM_RPC` | `https://api-seller.lamoda.ru/rpc` | нет |
-| `LM_B2B` | `https://b2b-api.lamoda.ru` | нет |
+| `LM` | `https://public-api-seller.lamoda.ru/api` | `LAMODA_API_URL` |
+| `МВ` | `https://omni-net.sellers.mvideo.ru` | `MVIDEO_API_URL` |
 
 Три адреса вынесены в окружение **только ради проб**: повадки методов — пределы
 периода, пагинацию, лимиты — на живом API не проверить. В бою их не задают.
@@ -273,8 +273,13 @@ Google Таблица «Настройки»              Маркетплейс
 FBY и FBS — **разные кампании**; подставишь чужой номер, метод вернёт пустой
 список без ошибки, и это легко не заметить.
 
-**Ламода** (`Authorization: Bearer`, но **токены разные**):
-`POST /rpc` → `getStocks` и `GET /v1/orders`.
+**Ламода** (Seller Partner API v2, `Authorization: Bearer` + `sellerId`):
+`POST /v2/auth-token`, `GET /v2/fbo/stocks`, `GET /v2/fbs/stocks`,
+`GET /v2/orders` и `GET /v2/orders/{orderId}`, `GET /v2/nomenclatures`.
+
+**М.Видео** (omninet, ключ в `api-key` и в `Authorization: Bearer`):
+`POST /v1/product/stock/info`, `POST /v1/order/fbs/list`, `POST /v1/order/dbs/list`,
+`POST /v1/product/mapping/list`. Схемы FBO в API нет.
 
 ### Переменные окружения
 
@@ -288,8 +293,9 @@ FBY и FBS — **разные кампании**; подставишь чужо�
 | `OZON_CLIENT_ID`, `OZON_API_KEY` | для Ozon | один доступ на обе схемы |
 | `YM_API_KEY` | для Яндекса | |
 | `YM_CAMPAIGN_FBY`, `YM_CAMPAIGN_FBS` | для Яндекса | **разные** номера кампаний |
-| `LAMODA_TOKEN` | остатки Ламоды | Seller Partner API, JSON-RPC |
-| `LAMODA_B2B_TOKEN` | заказы Ламоды | B2B Platform API, REST |
+| `LAMODA_CLIENT_ID`, `LAMODA_CLIENT_SECRET` | задачи Ламоды | Seller Partner API v2, токен по OAuth |
+| `LAMODA_SELLER_ID` | задачи Ламоды | Seller Shop ID, если токен его не несёт |
+| `MVIDEO_API_KEY` | задачи М.Видео | ключ API поставщика omninet |
 | `TZ` | нет | по умолчанию `Europe/Moscow` |
 | `OZON_API_URL`, `WB_ANALYTICS_URL`, `WB_CONTENT_URL` | нет | **только для проб** |
 

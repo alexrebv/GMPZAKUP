@@ -21,8 +21,8 @@
 | `WB_КОНТЕНТ` | `https://content-api.wildberries.ru` | `WB_CONTENT_URL` | `wb-ozon.js` |
 | `OZ` | `https://api-seller.ozon.ru` | `OZON_API_URL` | `wb-ozon.js` |
 | `ЯМ` | `https://api.partner.market.yandex.ru` | нет | `yandex-lamoda.js` |
-| `LM_RPC` | `https://api-seller.lamoda.ru/rpc` | нет | `yandex-lamoda.js` |
-| `LM_B2B` | `https://b2b-api.lamoda.ru` | нет | `yandex-lamoda.js` |
+| `LM` | `https://public-api-seller.lamoda.ru/api` | `LAMODA_API_URL` | `lamoda.js` |
+| `МВ` | `https://omni-net.sellers.mvideo.ru` | `MVIDEO_API_URL` | `mvideo.js` |
 
 Три адреса вынесены в окружение **только ради проб**: повадки методов — пределы
 периода, пагинацию, лимиты — на живом API не проверить. В бою их не задают.
@@ -74,6 +74,8 @@
 |---|---|---|
 | `POST /campaigns/{кампания}/offers/stocks` | остатки FBO и FBS | `yandex-lamoda.js` |
 | `GET /campaigns/{кампания}/orders?fromDate=…&toDate=…` | заказы | `yandex-lamoda.js` |
+| `GET /campaigns/{кампания}` | номер кабинета для каталога | `yandex-lamoda.js` |
+| `POST /businesses/{кабинет}/offer-mappings` | товары и штрихкоды для каталога | `yandex-lamoda.js` |
 
 Заголовок: `Api-Key`. Кампании FBY и FBS — **разные номера**.
 
@@ -81,10 +83,36 @@
 
 | Метод | Задача | Строка |
 |---|---|---|
-| `POST /rpc` → `getStocks` | остатки FBO и FBS | `yandex-lamoda.js` |
-| `GET /v1/orders?page=…&created_from=…&fulfillment_type=…` | заказы | `yandex-lamoda.js` |
+| `POST /v2/auth-token` | токен по `client_id`/`client_secret` | `lamoda.js` |
+| `v1.tokens.create` (JSON-RPC) | тот же токен, если v2 не ответил | `lamoda.js` |
+| `v1.partner.list` (JSON-RPC) | номер продавца, если его нет ни в окружении, ни в токене | `lamoda.js` |
+| `GET /v2/nomenclatures` | номенклатуры: артикул, SKU, штрихкод (страница 25) | `lamoda.js` |
+| `GET /v2/fbo/stocks` | остатки FBO | `lamoda.js` |
+| `GET /v2/fbs/stocks` | остатки FBS | `lamoda.js` |
+| `GET /v2/orders` | шапки заказов по дате изменения | `lamoda.js` |
+| `GET /v2/orders/{orderId}` | позиции заказа | `lamoda.js` |
 
-Заголовок обоих: `Authorization: Bearer <токен>`, но **токены разные**.
+Заголовок: `Authorization: Bearer <токен>`, в каждом методе — `sellerId`.
+
+### М.Видео (omninet)
+
+| Метод | Задача | Строка |
+|---|---|---|
+| `POST /v1/product/stock/info` | остатки складов продавца | `mvideo.js` |
+| `POST /v1/merchant/location/list` | имена FBS-складов | `mvideo.js` |
+| `POST /v1/location/list` | имена DBS-складов | `mvideo.js` |
+| `POST /v1/order/fbs/list` | заказы FBS по дате изменения | `mvideo.js` |
+| `POST /v1/order/dbs/list` | заказы DBS по дате создания | `mvideo.js` |
+| `POST /v1/product/mapping/list` | артикул ↔ ID товара для каталога | `mvideo.js` |
+
+Ключ — в `api-key` и в `Authorization: Bearer`, плюс обязательный `User-Agent`.
+Адресов два (`omni-net.sellers.mvideo.ru`, `api.omniom.ru`), первый ответивший запоминается.
+Схемы FBO в API нет.
+
+### Каталог (`catalog.js`)
+
+Своих методов нет: берёт карточки ВБ (`content/v2/get/cards/list`), товары
+Ozon (`/v3/product/list`, `/v3/product/info/list`), Яндекса, Ламоды и М.Видео.
 
 ---
 
@@ -102,8 +130,11 @@
 | `YM_API_KEY` | для задач Яндекса | |
 | `YM_CAMPAIGN_FBY` | для FBO Яндекса | номер кампании FBY |
 | `YM_CAMPAIGN_FBS` | для FBS Яндекса | номер кампании FBS |
-| `LAMODA_TOKEN` | для остатков Ламоды | Seller Partner API, JSON-RPC |
-| `LAMODA_B2B_TOKEN` | для заказов Ламоды | B2B Platform API, REST |
+| `LAMODA_CLIENT_ID` | для задач Ламоды | Seller Partner API v2 |
+| `LAMODA_CLIENT_SECRET` | для задач Ламоды | Seller Partner API v2 |
+| `LAMODA_SELLER_ID` | для задач Ламоды, если токен его не несёт | Seller Shop ID |
+| `MVIDEO_API_KEY` | для задач М.Видео | ключ API поставщика |
+| `MVIDEO_API_URL` | нет | один адрес М.Видео вместо перебора двух |
 | `TZ` | нет | по умолчанию `Europe/Moscow` |
 | `OZON_API_URL` | нет | **только для проб** |
 | `WB_ANALYTICS_URL` | нет | **только для проб** |
@@ -142,8 +173,11 @@
 | Заказы Яндекс FBO/FBS | тот же | дозапись | `[0,2]` заказ + артикул |
 | FBO/FBS остатки Ламода | тот же | снимок | — |
 | Заказы Ламода FBO/FBS | тот же | дозапись | `[0,2]` |
-| FBO/FBS остатки Мвидео | тот же | снимок | — вручную |
-| Заказы Мвидео FBO/FBS | тот же | дозапись | `[0]` — вручную |
+| FBO остатки Мвидео | тот же | снимок | — вручную: FBO в API нет |
+| FBS остатки Мвидео | тот же | снимок | — |
+| Заказы Мвидео FBO | тот же | дозапись | — вручную: FBO в API нет |
+| Заказы Мвидео FBS | тот же | дозапись | `[0,2]` заказ + артикул, FBS и DBS |
+| Каталог | «Каталог» + «Штрихкоды» | снимок | — раз в сутки, время в колонке D |
 
 Снимок — любой лист, в имени которого есть слово «остатки» (`СНИМКИ`,
 `schemas.js`).
@@ -191,7 +225,7 @@
 |---|---|---|
 | Имя листа | `Настройки` | `НАСТРОЙКИ.лист` |
 | Параметры | `A3:B12` | `параметрыОт` / `параметрыДо` |
-| Блок задач | `A15:G61` | `задачиОт` / `задачиДо` |
+| Блок задач | `A15:G62` | `задачиОт` / `задачиДо` |
 | Дочитывается ниже блока | ещё 5 строк | `задачиЗапас` |
 | Куда пишется итог | `F{строка}:G{строка}` | `config.js` |
 
@@ -274,7 +308,9 @@
 | `ШАГ_ЯМ` | `28` суток | метод не принимает интервал длиннее 30 |
 | страница остатков ЯМ | `200` | |
 | страница заказов ЯМ | `50` | |
-| страница Ламоды | `500` остатки / `200` заказы | |
+| страница Ламоды | `1000` остатки и заказы / `25` номенклатуры | `lamoda.js` |
+| страница М.Видео | `100` (`ПАЧКА`) | `mvideo.js` |
+| `ДОЛЯ_ОСТАТЬСЯ` | `0.7` | каталог не сжимается сильнее за прогон (`catalog.js`) |
 | пауза между страницами | `300` мс | везде |
 
 ---
@@ -311,7 +347,8 @@
 |---|---|---|
 | `ОШИБКА: …` | `index.js` | префикс «Результата» при сбое |
 | `\| успех: ДД.ММ.ГГГГ ЧЧ:ММ:СС` | `config.js` | метка успеха, переживающая ошибки |
-| `нет коннектора, данные заливаются вручную` | `index.js` | М.Видео |
+| `нет коннектора, данные заливаются вручную` | `index.js` | задача без коннектора |
+| `в API М.Видео нет схемы FBO, …` | `index.js` | FBO М.Видео |
 | `ФИЛЬТР НЕ ПРИМЕНЁН: …` | `wb-ozon.js` | Ozon вернул возвраты раньше запрошенной даты |
 | `(дата взята из колонки D)` | `wb-ozon.js` | «С даты» прочитана из колонки глубины |
 | `, шапка проставлена` | `sheets.js` | дозаполнены пустые заголовки |

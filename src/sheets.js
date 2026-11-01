@@ -206,6 +206,7 @@ export async function сохранить(лист, строки) {
     // колонке A: в остатках ВБ там штрихкод, а он бывает пустым
     const шапка = (await читать(`'${лист}'!A1:${буква}1`))[0] || [];
     const правки = правкиШапки(шапка);
+    await обеспечитьСтроки(лист, строки.length + 1);
     await писать(`'${лист}'!A2`, строки);
     if (правки.length) await писатьПачкой(правки);
     await очистить(лист, ширина, ПРЕДЕЛ, строки.length + 2);
@@ -292,4 +293,41 @@ export async function сохранить(лист, строки) {
   }
 
   return { всего: итог.length, новых, изменено: правленые.size, заметка };
+}
+
+/**
+ * Хватит ли листу строк. `values.update` за край сетки не пишет — отвечает
+ * 400 «exceeds grid limits», — поэтому недостающие строки добавляем заранее.
+ * Подменённый в пробах клиент метаданных не знает: там проверка пропускается.
+ */
+async function обеспечитьСтроки(лист, нужно) {
+  const api = await таблицы();
+  if (typeof api.spreadsheets.get !== 'function') return;
+  const { data } = await api.spreadsheets.get({
+    spreadsheetId: SHEET_ID, fields: 'sheets.properties(sheetId,title,gridProperties.rowCount)',
+  });
+  const св = (data.sheets || []).map((л) => л.properties).find((п) => п.title === лист);
+  if (!св) throw new Error(`в книге нет листа «${лист}»`);
+  const есть = св.gridProperties?.rowCount || 0;
+  if (есть >= нужно) return;
+  await api.spreadsheets.batchUpdate({
+    spreadsheetId: SHEET_ID,
+    requestBody: { requests: [{ appendDimension: {
+      sheetId: св.sheetId, dimension: 'ROWS', length: нужно - есть + 100,
+    } }] },
+  });
+}
+
+/**
+ * Снимок, который начинается не со второй строки: у листа «Штрихкоды» шапка
+ * на четвёртой. Как и у остатков, сначала пишем, потом убираем хвост, а пустой
+ * ответ снимок не стирает.
+ */
+export async function снимокСоСтроки(лист, отСтроки, ширина, строки) {
+  if (!строки.length) {
+    throw new Error(`«${лист}»: пришло 0 строк, снимок не перезаписан`);
+  }
+  await обеспечитьСтроки(лист, отСтроки + строки.length);
+  await писать(`'${лист}'!A${отСтроки}`, строки);
+  await очистить(лист, ширина, ПРЕДЕЛ, отСтроки + строки.length);
 }

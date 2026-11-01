@@ -20,6 +20,9 @@ const ПОРЯДОК = [
   'src/sheets.js',
   'src/wb-ozon.js',
   'src/yandex-lamoda.js',
+  'src/lamoda.js',
+  'src/mvideo.js',
+  'src/catalog.js',
   'src/tz.js',
 ];
 
@@ -30,7 +33,10 @@ const ОПИСАНИЯ = {
   'src/http.js': 'Запросы с повторами, даты, период, защита значений от Таблиц.',
   'src/sheets.js': 'Чтение и запись книги: снимки, дозапись, сравнение, шапка.',
   'src/wb-ozon.js': 'Коннекторы Wildberries и Ozon.',
-  'src/yandex-lamoda.js': 'Коннекторы Яндекс Маркета и Ламоды.',
+  'src/yandex-lamoda.js': 'Коннекторы Яндекс Маркета и товары Яндекса для каталога.',
+  'src/lamoda.js': 'Коннекторы Ламоды: Seller Partner API v2.',
+  'src/mvideo.js': 'Коннекторы М.Видео: omninet, схемы FBS и DBS.',
+  'src/catalog.js': 'Сборка каталога и справочника штрихкодов из карточек всех площадок.',
   'src/tz.js': 'Часовой пояс. Импортируется первым.',
 };
 
