@@ -1,9 +1,9 @@
 import { сохранить } from './sheets.js';
 import { требовать } from './config.js';
-import { запрос, сон, вТаблицу, число, началоПериода, период, текстом,
-  локальныйISO } from './http.js';
+import { запрос, сон, вТаблицу, число, период, текстом } from './http.js';
 
 /* ══════════════════ ЯНДЕКС МАРКЕТ ══════════════════
+ * (Ламода переехала в lamoda.js, М.Видео — в mvideo.js, каталог — в catalog.js.)
  * FBY и FBS — разные кампании. Если подставить чужой номер,
  * метод вернёт пустой список без ошибки, и это легко не заметить.
  */
@@ -138,82 +138,52 @@ export const ямЗаказыFbo = (з) =>
 export const ямЗаказыFbs = (з) =>
   ямЗаказы(требовать('YM_CAMPAIGN_FBS')[0], 'Заказы Яндекс FBS', з);
 
-/* ══════════════════ ЛАМОДА ══════════════════
- * Остатки и товары — Seller Partner API на JSON-RPC.
- * Заказы — B2B Platform Partner API на REST, отдельный токен.
+
+/**
+ * Товары Яндекса для каталога. Штрихкоды живут на уровне кабинета, а не
+ * кампании: номер кабинета берётся из кампании, дальше — `offer-mappings`.
  */
-const LM_RPC = 'https://api-seller.lamoda.ru/rpc';
-const LM_B2B = 'https://b2b-api.lamoda.ru';
-
-async function rpc(метод, параметры = {}) {
-  const [токен] = требовать('LAMODA_TOKEN');
-  const ответ = await запрос(LM_RPC, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${токен}` },
-    body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: метод, params: параметры }),
-  }, { имя: `Lamoda ${метод}` });
-  if (ответ.error) throw new Error(`Lamoda ${метод}: ${JSON.stringify(ответ.error).slice(0, 200)}`);
-  return ответ.result || {};
+async function ямКабинет() {
+  const [ключ] = требовать('YM_API_KEY');
+  const кампания = process.env.YM_CAMPAIGN_FBY || process.env.YM_CAMPAIGN_FBS;
+  if (!кампания) throw new Error('не заполнено: YM_CAMPAIGN_FBY или YM_CAMPAIGN_FBS');
+  const ответ = await запрос(`${ЯМ}/campaigns/${кампания}`, { headers: { 'Api-Key': ключ } },
+    { имя: 'ЯМ кампания', пауза: 2000 });
+  const ид = ответ.campaign?.business?.id;
+  if (!ид) throw new Error('ЯМ: в кампании нет номера кабинета');
+  return { ключ, ид };
 }
 
-async function лмОстатки(лист, схема) {
-  const строки = [];
-  const отметка = вТаблицу(new Date());
-  let страница = 1;
-  for (let n = 0; n < 200; n += 1) {
-    const res = await rpc('getStocks', { page: страница, limit: 500, stock_type: схема });
-    const пачка = res.items || res.stocks || [];
-    for (const с of пачка) {
-      const доступно = число(с.quantity ?? с.available);
-      if (!доступно) continue;
-      строки.push(схема === 'fbo'
-        ? [текстом(с.supplier_sku || с.sku) || '-', текстом(с.lamoda_sku || с.sku) || '-',
-          с.warehouse || 'Склад Lamoda', доступно, число(с.reserved), отметка]
-        : [текстом(с.supplier_sku || с.sku) || '-', текстом(с.lamoda_sku || с.sku) || '-',
-          с.warehouse || 'Склад продавца', доступно, отметка]);
+export async function ямТовары() {
+  const { ключ, ид } = await ямКабинет();
+  const товары = [];
+  let токен = '';
+  for (let n = 0; ; n += 1) {
+    if (n >= 500) throw new Error(`ЯМ товары: прочитано ${товары.length} и упёрлись в предел страниц`);
+    const п = new URLSearchParams({ limit: '200' });
+    if (токен) п.set('page_token', токен);
+    const ответ = await запрос(`${ЯМ}/businesses/${ид}/offer-mappings?${п}`, {
+      method: 'POST',
+      headers: { 'Api-Key': ключ, 'Content-Type': 'application/json' },
+      body: '{}',
+    }, { имя: 'ЯМ товары', пауза: 2000 });
+    const тело = ответ.result || ответ;
+    if (!Array.isArray(тело.offerMappings)) throw new Error(`ЯМ товары: ответ без списка на странице ${n + 1}`);
+    for (const м of тело.offerMappings) {
+      const о = м.offer || {};
+      товары.push({
+        артикул: String(о.offerId ?? '').trim(),
+        ид: String(м.mapping?.marketSku ?? ''),
+        баркоды: (о.barcodes || []).map(String),
+        название: о.name || '',
+        бренд: о.vendor || '',
+      });
     }
-    if (пачка.length < 500) break;
-    страница += 1;
+    const след = тело.paging?.nextPageToken;
+    if (!след) break;
+    if (след === токен) throw new Error('ЯМ товары: курсор не двигает выборку');
+    токен = след;
     await сон(300);
   }
-  await сохранить(лист, строки);
-  return `строк ${строки.length}`;
+  return товары.filter((т) => т.артикул);
 }
-
-export const лмОстаткиFbo = () => лмОстатки('FBO остатки Ламода', 'fbo');
-export const лмОстаткиFbs = () => лмОстатки('FBS остатки Ламода', 'fbs');
-
-async function лмЗаказы(лист, схема, задача) {
-  const [токен] = требовать('LAMODA_B2B_TOKEN');
-  const с = началоПериода(задача);
-  const заказы = [];
-  let страница = 1;
-  for (let n = 0; n < 300; n += 1) {
-    const п = new URLSearchParams({
-      page: String(страница), limit: '200',
-      created_from: локальныйISO(с).slice(0, 10),
-      fulfillment_type: схема,
-    });
-    const ответ = await запрос(`${LM_B2B}/v1/orders?${п}`, {
-      headers: { Authorization: `Bearer ${токен}` },
-    }, { имя: 'Lamoda заказы' });
-    const пачка = ответ.items || ответ.orders || [];
-    заказы.push(...пачка);
-    if (пачка.length < 200) break;
-    страница += 1;
-    await сон(300);
-  }
-  const отметка = вТаблицу(new Date());
-  const строки = заказы.flatMap((з) => (з.items || [з]).map((т) => [
-    String(з.order_id || з.id || ''), вТаблицу(з.created_at || з.order_date),
-    текстом(т.supplier_sku || т.sku) || '-', текстом(т.lamoda_sku || т.sku) || '-',
-    число(т.quantity ?? 1), число(т.price), з.status || '-',
-    з.delivery?.region || з.region || '-', отметка,
-  ]));
-  const итог = await сохранить(лист, строки);
-  return `заказов ${заказы.length}, строк ${строки.length}, `
-       + `новых ${итог.новых}, изменено ${итог.изменено}${итог.заметка}`;
-}
-
-export const лмЗаказыFbo = (з) => лмЗаказы('Заказы Ламода FBO', 'fbo', з);
-export const лмЗаказыFbs = (з) => лмЗаказы('Заказы Ламода FBS', 'fbs', з);
