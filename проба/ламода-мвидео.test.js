@@ -82,13 +82,3 @@ test('М.Видео: обход по курсору доходит до конц
   }
 });
 
-test('М.Видео: FBO-строка заказа без колонки «Схема»', async () => {
-  const { мвСтрокаЗаказаFbo } = await import('../src/mvideo.js');
-  const р = мвСтрокаЗаказаFbo({ merchant_order_id: 'Z1', created_at: '2026-10-01T10:00:00Z',
-    offer_id: '015-15-30', status: 'DELIVERED',
-    prices: [{ price_type: 'CUSTOMER_FINAL_PRICE', value: 199000 }] }, '-');
-  assert.equal(р.length, СХЕМЫ['Заказы Мвидео FBO'].length);
-  assert.equal(без(р[2]), '015-15-30');
-  assert.equal(р[4], 1990);
-  assert.equal(р[5], 'DELIVERED');
-});

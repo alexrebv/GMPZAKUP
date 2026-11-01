@@ -279,7 +279,7 @@ FBY и FBS — **разные кампании**; подставишь чужо�
 
 **М.Видео** (omninet, ключ в `api-key` и в `Authorization: Bearer`):
 `POST /v1/product/stock/info`, `POST /v1/order/fbs/list`, `POST /v1/order/dbs/list`,
-`POST /v1/order/fbo/list`, `POST /v1/market/location/list`, `POST /v1/product/mapping/list`.
+`POST /v1/product/mapping/list`. Схемы FBO в API нет.
 
 ### Переменные окружения
 
