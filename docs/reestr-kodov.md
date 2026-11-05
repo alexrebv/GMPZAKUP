@@ -107,7 +107,7 @@
 | `POST /v1/order/dbs/list` | заказы DBS по дате создания | `mvideo.js` |
 | `POST /v1/product/mapping/list` | артикул ↔ ID товара для каталога | `mvideo.js` |
 
-Ключ — только в `api-key` (Bearer — лишь для запасного `api.omniom.ru`), плюс обязательный `User-Agent`.
+Ключ — в `api-key`; на 401/404/`400 OPERATION_NOT_SUPPORTED` запрос повторяется с одним `Authorization: Bearer` (стандарт omninet); прошедшая схема запоминается для метода; если не прошла ни одна, решает `api-key` (Bearer — только при 401 на `api-key`). 404 на `/v1/order/fbo/list` адрес шлюза не меняет; неподключённый DBS — 404, 403 или решающий `400 OPERATION_NOT_SUPPORTED`. На запасной `api.omniom.ru` — оба заголовка. Плюс обязательный `User-Agent`.
 Первая страница на «HTTP 400» пробуется в трёх видах тела; прошедший вид запоминается.
 Адресов два (`omni-net.sellers.mvideo.ru`, `api.omniom.ru`), первый ответивший запоминается.
 FBO — по стандарту omninet: заказы `POST /v1/order/fbo/list`, имена складов площадки
