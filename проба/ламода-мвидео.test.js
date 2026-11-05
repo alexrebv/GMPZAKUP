@@ -123,3 +123,115 @@ test('М.Видео: если 400 на всех видах тела — ошиб
   const чужая = async () => { throw new Error('М.Видео: HTTP 500 {}'); };
   await assert.rejects(мвОбход('/проба/500', 'mappings', {}, чужая), (е) => !/вид тела/.test(е.message));
 });
+
+// ─────────────────── М.Видео: FBO ───────────────────
+
+test('М.Видео: остатки на складе площадки идут в FBO, а не выбрасываются', async () => {
+  const { разделитьОстатки } = await import('../src/mvideo.js');
+  const ответ = [
+    { offer_id: 'СВОЙ-1', location_id: 'wh-1', count: 5 },               // свой склад → FBS
+    { offer_id: 'ПЛОЩ-1', market_location_id: 'koledino', count: 7 },    // склад площадки → FBO
+    { offer_id: 'ПЛОЩ-2', market_location_id: 'koledino', count: 0 },    // ноль — никуда
+    { offer_id: 'ОБА', location_id: 'wh-1', market_location_id: 'x', count: 3 }, // есть свой склад → FBS
+  ];
+  const { fbs, fbo } = разделитьОстатки(ответ);
+  assert.deepEqual(fbs.map((о) => о.offer_id), ['СВОЙ-1', 'ОБА']);
+  assert.deepEqual(fbo.map((о) => о.offer_id), ['ПЛОЩ-1'],
+    'строка со складом площадки и без своего склада — это FBO-остаток');
+});
+
+test('М.Видео: строка заказа FBO — по колонкам листа, цена из копеек, одна штука', async () => {
+  const { мвСтрокаЗаказаFbo } = await import('../src/mvideo.js');
+  const р = мвСтрокаЗаказаFbo({
+    merchant_order_id: '7513432034713632943', created_at: '2026-11-03T10:00:00+03:00',
+    offer_id: '1970-01-29', status: 'DELIVERED',
+    prices: [{ price_type: 'MERCHANT_PRICE', value: 599900 },
+      { price_type: 'CUSTOMER_FINAL_PRICE', value: 549900 }],
+  }, '05.11.2026 12:00:00');
+  assert.equal(р.length, СХЕМЫ['Заказы Мвидео FBO'].length, 'ширина строки не по схеме');
+  assert.equal(р[0], "'7513432034713632943", 'длинный номер заказа — строго текстом');
+  assert.equal(р[2], "'1970-01-29", 'артикул-дата — текстом');
+  assert.equal(р[3], 1, 'один заказ в API — один товар');
+  assert.equal(р[4], 5499, 'цена покупателя со скидкой, из копеек');
+  assert.equal(р[5], 'DELIVERED');
+});
+
+test('М.Видео: OPERATION_NOT_SUPPORTED не перебирает виды тела', async () => {
+  const { мвОбход, неПодключено } = await import('../src/mvideo.js');
+  let вызовов = 0;
+  const вызов = async () => {
+    вызовов += 1;
+    throw new Error('М.Видео /v1/order/fbo/list: HTTP 400 {"error_type":"ERROR_TYPE_UNSPECIFIED",'
+      + '"code":"OPERATION_NOT_SUPPORTED","message":"операция недоступна для текущей конфигурации"}');
+  };
+  await assert.rejects(мвОбход('/v1/order/fbo/list-проба', 'orders', {}, вызов), (е) => {
+    assert.ok(неПодключено(е), 'признак неподключённой схемы потерялся');
+    return true;
+  });
+  assert.equal(вызовов, 1,
+    `вызовов ${вызовов}: другой вид тела не лечит неподключённую схему, перебирать его незачем`);
+});
+
+test('М.Видео: на обычном 400 перебор видов тела по-прежнему работает', async () => {
+  const { мвОбход } = await import('../src/mvideo.js');
+  let вызовов = 0;
+  const вызов = async (путь, тело) => {
+    вызовов += 1;
+    if ('cursor' in тело) throw new Error('М.Видео: HTTP 400 Некорректный запрос');
+    return { orders: [{ merchant_order_id: '1' }] };
+  };
+  const итог = await мвОбход('/v1/order/fbo/list-проба-2', 'orders', {}, вызов);
+  assert.equal(итог.length, 1);
+  assert.equal(вызовов, 2, 'первый вид — 400, второй прошёл');
+});
+
+test('М.Видео: FBO-остатки собираются со складами площадки по именам', async () => {
+  const { мвОстаткиFboСтроки } = await import('../src/mvideo.js');
+  const вызов = async (путь) => {
+    if (путь === '/v1/product/stock/info') {
+      return { stocks: [
+        { offer_id: 'СВОЙ', location_id: 'wh-1', count: 5 },
+        { offer_id: '0042', market_location_id: 'koledino', count: 7 },
+        { offer_id: 'Б', market_location_id: 'tula', count: 2 },
+      ] };
+    }
+    if (путь === '/v1/market/location/list') {
+      return { locations: [{ market_location_id: 'koledino', name: 'Коледино' }] };
+    }
+    throw new Error(`неожиданный путь ${путь}`);
+  };
+  const { строки, складов, безИмени } = await мвОстаткиFboСтроки(вызов);
+  assert.equal(строки.length, 2, 'строка со своего склада в FBO попасть не должна');
+  assert.equal(складов, 2);
+  assert.equal(строки[0][0], "'0042", 'артикул с ведущим нулём — текстом');
+  assert.equal(строки[0][1], 'Коледино');
+  assert.equal(строки[0][2], 7);
+  assert.equal(строки[1][1], 'tula', 'склад без имени — идентификатором, а не прочерком');
+  assert.equal(безИмени, 1);
+});
+
+test('М.Видео: нет строк на складе площадки — ошибка с объяснением, лист не трогаем', async () => {
+  const { мвОстаткиFboСтроки } = await import('../src/mvideo.js');
+  const вызов = async (путь) => (путь === '/v1/product/stock/info'
+    ? { stocks: [{ offer_id: 'СВОЙ', location_id: 'wh-1', count: 5 }] }
+    : { locations: [] });
+  await assert.rejects(мвОстаткиFboСтроки(вызов), (е) => {
+    assert.match(е.message, /нет строк на складах площадки/);
+    assert.match(е.message, /всего пришло 1, из них со своего склада 1/);
+    assert.match(е.message, /лист не перезаписан/);
+    return true;
+  });
+});
+
+test('М.Видео: сбой справочника складов площадки на 500 не прячется', async () => {
+  const { мвОстаткиFboСтроки } = await import('../src/mvideo.js');
+  const вызов = async (путь) => {
+    if (путь === '/v1/product/stock/info') {
+      return { stocks: [{ offer_id: 'А', market_location_id: 'koledino', count: 1 }] };
+    }
+    throw new Error('М.Видео /v1/market/location/list: HTTP 500 внутренняя ошибка');
+  };
+  // 404 или «не подключено» — пережить можно (снимок, имя вернётся следующим прогоном);
+  // 500 — нет: это не «метода нет», а сбой, и молчать о нём нельзя
+  await assert.rejects(мвОстаткиFboСтроки(вызов), /HTTP 500/);
+});
