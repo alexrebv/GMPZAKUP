@@ -316,7 +316,7 @@ test('М.Видео: FBO-остатков нет — ошибка начинае
   for (const [ответ, ждём] of [
     ['HTTP 400 {"code":"OPERATION_NOT_SUPPORTED"}', /В форме FBO: по складам площадки \(2\) шлюз ответил OPERATION_NOT_SUPPORTED — FBO для этого кабинета не подключён\./],
     ['HTTP 500 {"message":"OPERATION_NOT_SUPPORTED upstream"}', /В форме FBO: запрос по складам площадки \(2\) не прошёл \(HTTP 500\)\./],
-    ['fetch failed', /В форме FBO: запрос по складам площадки \(2\) не прошёл \(без HTTP-ответа\)\./]]) {
+    ['fetch failed', /В форме FBO: запрос по складам площадки \(2\) не прошёл \(fetch failed\)\./]]) {
     const ш = шлюзОстатков({ склады: СКЛАДЫ, поСкладам: () => { throw new Error(`М.Видео /v1/product/stock/info: ${ответ}`); } });
     await assert.rejects(м.мвОстаткиFboСтроки(ш.вызов), (е) => {
       assert.match(е.message, ждём, ответ);
@@ -324,6 +324,23 @@ test('М.Видео: FBO-остатков нет — ошибка начинае
       return true;
     });
   }
+  // шлюз ответил 200, но не тем: причина — в выводе, а не «без HTTP-ответа»
+  for (const [ответ, ждём] of [
+    [() => ({}), /не прошёл \(ответ без списка «stocks» на странице 1\)\./],
+    [() => { throw new Error('М.Видео /v1/product/stock/info: ответ не JSON: <html>'); }, /не прошёл \(ответ не JSON: <html>\)\./],
+    [() => ({ stocks: [{ offer_id: 'А', market_location_id: 'koledino', count: 1 }], next_cursor: 'тот же' }),
+      /не прошёл \(курсор не двигает выборку на странице 2\)\./]]) {
+    const ш = шлюзОстатков({ склады: СКЛАДЫ, поСкладам: ответ });
+    await assert.rejects(м.мвОстаткиFboСтроки(ш.вызов), (е) => {
+      assert.match(е.message, ждём);
+      assert.ok(!е.message.includes('без HTTP-ответа'), е.message);
+      return true;
+    });
+  }
+  // 500 справочника со словом OPERATION_NOT_SUPPORTED в теле — тоже сбой
+  const ons500 = шлюзОстатков({ склады: new Error('М.Видео /v1/market/location/list: HTTP 500 {"message":"OPERATION_NOT_SUPPORTED upstream"}'),
+    поСкладам: нельзя });
+  await assert.rejects(м.мвОстаткиFboСтроки(ons500.вызов), /^Error: М\.Видео \/v1\/market\/location\/list: HTTP 500/);
   // пустой справочник
   const пусто = шлюзОстатков({ склады: [], поСкладам: нельзя });
   await assert.rejects(м.мвОстаткиFboСтроки(пусто.вызов), /В форме FBO: складов площадки шлюз не назвал — справочник пуст\. Без фильтра: /);
