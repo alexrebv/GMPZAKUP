@@ -434,6 +434,41 @@ test('М.Видео: проба второй схемы — одна попыт�
   assert.deepEqual(попыток, [5, 1]);
 });
 
+test('М.Видео: повторы второй схемы — одна у пробы, обычные, если её ответ решает', async () => {
+  // после 404 и OPERATION_NOT_SUPPORTED проба Bearer ничего не решает — одна
+  // попытка; после 401 решает ответ Bearer — обычные повторы: иначе в мире
+  // Bearer разовый сбой связи после перезапуска уводил на запасной адрес
+  for (const [ответКлюч, попыток, ждём] of [
+    [404, 5, [5, 1]], [[400, 'OPERATION_NOT_SUPPORTED'], 5, [5, 1]], [401, 5, [5, 5]], [401, 2, [2, 2]]]) {
+    const м = await свежийМв(`повторы-${ответКлюч}-${попыток}`);
+    const было = [];
+    const звать = async (url, опции, { имя, попыток: n }) => {
+      было.push(n);
+      if (опции.headers.Authorization) throw new Error(`${имя}: HTTP 503 {}`);
+      const [код, тело] = Array.isArray(ответКлюч) ? ответКлюч : [ответКлюч, ''];
+      throw new Error(`${имя}: HTTP ${код} {"code":"${тело}"}`);
+    };
+    await assert.rejects(м.сКлючом(МВИДЕО, '/v1/g', {}, 'k', звать, попыток));
+    assert.deepEqual(было, ждём, `api-key ${ответКлюч}, попыток ${попыток}`);
+  }
+});
+
+test('М.Видео: OPERATION_NOT_SUPPORTED на api-key — пробуется Bearer; «не подключено» решает api-key', async () => {
+  const м = await свежийМв('ons-проба');
+  const { звать, звали } = поддельныйЗапрос((путь, сх) => {
+    if (сх === 'api-key') throw new Error(`М.Видео ${путь}: HTTP 400 {"code":"OPERATION_NOT_SUPPORTED"}`);
+    return путь === '/v1/есть' ? { ok: сх } : 401;
+  });
+  assert.deepEqual(await м.сКлючом(МВИДЕО, '/v1/есть', {}, 'k', звать), { ok: 'Bearer' });
+  await assert.rejects(м.сКлючом(МВИДЕО, '/v1/нет', {}, 'k', звать), (е) => {
+    assert.equal(м.статусОшибки(е), 400);
+    assert.ok(м.неПодключено(е), е.message);
+    assert.deepEqual(е.статусы, [400, 401]);
+    return true;
+  });
+  assert.deepEqual(звали, ['/v1/есть api-key', '/v1/есть Bearer', '/v1/нет api-key', '/v1/нет Bearer']);
+});
+
 test('М.Видео: справка о второй схеме не включает решения — ни перебор тела, ни «не подключено»', async () => {
   const м = await свежийМв('справка');
   const { звать } = поддельныйЗапрос((путь, сх) => {
@@ -548,7 +583,7 @@ test('М.Видео: возврат с запомненного Bearer к api-ke
   await м.сКлючом(МВИДЕО, '/v1/n', {}, 'k', звать, 5);
   этап = 'api-key';
   assert.deepEqual(await м.сКлючом(МВИДЕО, '/v1/n', {}, 'k', звать, 5), { ok: 'api-key' });
-  assert.deepEqual(попытки, ['api-key 5', 'Bearer 1', 'Bearer 5', 'api-key 5']);
+  assert.deepEqual(попытки, ['api-key 5', 'Bearer 5', 'Bearer 5', 'api-key 5']);
 });
 
 test('М.Видео: справка о второй схеме — ответ целиком, но не длиннее 200 знаков', async () => {
@@ -570,6 +605,15 @@ test('М.Видео: 400, 429, 500, сеть на api-key — без второ�
     assert.deepEqual(звали, [`${путь} api-key`], `на ${ответ} была вторая попытка`);
     assert.equal(м.пометкаСхемы(путь), '');
   }
+  // слово OPERATION_NOT_SUPPORTED в теле пятисотки — сбой, а не «не подключено»:
+  // второй попытки нет и здесь
+  const было = [];
+  const пятисотка = async (url, опции, { имя }) => {
+    было.push(опции.headers.Authorization ? 'Bearer' : 'api-key');
+    throw new Error(`${имя}: HTTP 500 {"message":"upstream OPERATION_NOT_SUPPORTED"}`);
+  };
+  await assert.rejects(м.сКлючом(МВИДЕО, '/v1/код-500-ons', {}, 'k', пятисотка), /HTTP 500/);
+  assert.deepEqual(было, ['api-key']);
 });
 
 test('М.Видео: на omniom ключ обоими заголовками, второй попытки и памяти нет', async () => {
@@ -899,6 +943,158 @@ test('М.Видео, задача: 401 на заказах FBO первыми п
       поддельнаяКнига({});
       const м = await свежийМв('fbo-401-адрес');
       assert.match(await м.мвЗаказыFbo(ЗАДАЧА), /^заказов FBO 1, .*, ЧЕРЕЗ ЗАПАСНОЙ АДРЕС api\.omniom\.ru$/);
+    } finally {
+      шлюз.вернуть();
+    }
+  });
+});
+
+/** Паузы между повторами `запрос()` — без ожидания: проба про исход, а не про время. */
+async function безПауз(тело) {
+  const было = globalThis.setTimeout;
+  globalThis.setTimeout = (ф, мс, ...арг) => было(ф, 0, ...арг);
+  try {
+    return await тело();
+  } finally {
+    globalThis.setTimeout = было;
+  }
+}
+
+test('М.Видео, задача: 404 на заказах FBO первыми после перезапуска не меняет адрес, что бы ни ответил Bearer', async () => {
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  for (const [ответКлюч, ответBearer] of [[404, 404], [404, 401], [404, 403], [404, 500], [404, 'сеть'], [401, 404]]) {
+    await вОкружении(undefined, async () => {
+      const шлюз = поддельныйШлюз((путь, сх, хост) => {
+        if (хост === 'api.omniom.ru') return [401];
+        if (путь === '/v1/order/fbo/list') return [сх === 'api-key' ? ответКлюч : ответBearer];
+        if (путь === '/v1/order/fbs/list') return список('orders', [заказМв('F1', 'A1')]);
+        return [404];
+      });
+      const сеть = globalThis.fetch;
+      globalThis.fetch = async (url, опции) => {
+        if (ответBearer === 'сеть' && опции.headers.Authorization && !опции.headers['api-key']) {
+          throw new TypeError('fetch failed');
+        }
+        return сеть(url, опции);
+      };
+      try {
+        поддельнаяКнига({});
+        const м = await свежийМв(`fbo-адрес-${ответКлюч}-${ответBearer}`);
+        await безПауз(() => assert.rejects(м.мвЗаказыFbo(ЗАДАЧА), /omni-net\.sellers\.mvideo\.ru/));
+        const fbs = await м.мвЗаказыFbs(ЗАДАЧА);
+        assert.ok(!fbs.includes('ЗАПАСНОЙ'), `api-key ${ответКлюч}, Bearer ${ответBearer}: ${fbs}`);
+        assert.ok(!шлюз.звали.some((з) => з.startsWith('api.omniom.ru')),
+          `api-key ${ответКлюч}, Bearer ${ответBearer}: ${шлюз.звали.join(', ')}`);
+      } finally {
+        globalThis.fetch = сеть;
+        шлюз.вернуть();
+      }
+    });
+  }
+});
+
+test('М.Видео, задача: сбой связи на заказах FBO первыми после перезапуска адрес меняет, как раньше', async () => {
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  await вОкружении(undefined, async () => {
+    const шлюз = поддельныйШлюз(() => список('orders', [заказМв('O1', 'A2')]));
+    const сеть = globalThis.fetch;
+    globalThis.fetch = async (url, опции) => {
+      if (new URL(url).host !== 'api.omniom.ru') throw new TypeError('fetch failed');
+      return сеть(url, опции);
+    };
+    try {
+      поддельнаяКнига({});
+      const м = await свежийМв('fbo-сеть-адрес');
+      assert.match(await безПауз(() => м.мвЗаказыFbo(ЗАДАЧА)), /, ЧЕРЕЗ ЗАПАСНОЙ АДРЕС api\.omniom\.ru$/);
+    } finally {
+      globalThis.fetch = сеть;
+      шлюз.вернуть();
+    }
+  });
+});
+
+test('М.Видео, задачи: шлюз на Bearer, разовый сбой связи первым запросом после перезапуска — адрес тот же', async () => {
+  // после 401 на api-key решает ответ Bearer; с одной попыткой сбой связи на нём
+  // уводил процесс на запасной адрес до перезапуска
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  await вОкружении(undefined, async () => {
+    let сбоев = 1;
+    const шлюз = поддельныйШлюз((путь, сх, хост) => {
+      if (хост === 'api.omniom.ru' || сх === 'api-key') return [401];
+      if (путь === '/v1/order/fbs/list') return список('orders', [заказМв('F1', 'A1')]);
+      return [404];
+    });
+    const сеть = globalThis.fetch;
+    globalThis.fetch = async (url, опции) => {
+      if (опции.headers.Authorization && !опции.headers['api-key'] && сбоев > 0) {
+        сбоев -= 1;
+        throw new TypeError('fetch failed');
+      }
+      return сеть(url, опции);
+    };
+    try {
+      поддельнаяКнига({});
+      const м = await свежийМв('bearer-сбой-связи');
+      for (let прогон = 0; прогон < 2; прогон += 1) {
+        const итог = await безПауз(() => м.мвЗаказыFbs(ЗАДАЧА));
+        assert.match(итог, /заказов FBS 1, .*, ключ в Authorization: Bearer$/, `прогон ${прогон}: ${итог}`);
+        assert.ok(!итог.includes('ЗАПАСНОЙ'), итог);
+      }
+    } finally {
+      globalThis.fetch = сеть;
+      шлюз.вернуть();
+    }
+  });
+});
+
+test('М.Видео, задачи: настоящий отказ DBS по-прежнему роняет задачу и не трогает лист', async () => {
+  // терпится только «не подключён»: 404/403 или решающий 400 OPERATION_NOT_SUPPORTED.
+  // Пятисотка — даже со словом в теле — и голый 400 — это сбой, а не «DBS недоступен»
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  for (const отказ of [[500], [400], [500, { message: 'upstream OPERATION_NOT_SUPPORTED' }]]) {
+    await вОкружении(МВИДЕО, async () => {
+      const шлюз = поддельныйШлюз((путь, сх) => {
+        if (сх !== 'api-key') return [401];
+        if (путь === '/v1/order/dbs/list' || путь === '/v1/location/list') return отказ;
+        if (путь === '/v1/merchant/location/list') return список('locations', [{ location_id: 'L1', name: 'Склад' }]);
+        if (путь === '/v1/product/stock/info') {
+          return список('stocks', [{ offer_id: 'A1', location_id: 'L1', count: 3, available_count: 3 }]);
+        }
+        if (путь === '/v1/order/fbs/list') return список('orders', [заказМв('F1', 'A1')]);
+        return [500];
+      });
+      try {
+        const { книга } = поддельнаяКнига({});
+        const м = await свежийМв(`dbs-сбой-${отказ[0]}-${отказ.length}`);
+        await безПауз(() => assert.rejects(м.мвЗаказыFbs(ЗАДАЧА), /\/v1\/order\/dbs\/list/, `заказы, ${отказ[0]}`));
+        await безПауз(() => assert.rejects(м.мвОстаткиFbs(), /\/v1\/location\/list/, `остатки, ${отказ[0]}`));
+        assert.equal(книга.get('Заказы Мвидео FBS'), undefined);
+        assert.equal(книга.get('FBS остатки Мвидео'), undefined);
+      } finally {
+        шлюз.вернуть();
+      }
+    });
+  }
+});
+
+test('М.Видео, задачи: OPERATION_NOT_SUPPORTED на api-key, а с Bearer данные — данные пишутся', async () => {
+  // «не подключено» по одной схеме ключа — вывод только про неё
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  await вОкружении(МВИДЕО, async () => {
+    const шлюз = поддельныйШлюз((путь, сх) => {
+      if (путь === '/v1/order/fbs/list') return сх === 'api-key' ? список('orders', [заказМв('F1', 'A1')]) : [401];
+      if (сх === 'api-key') return [400, { code: 'OPERATION_NOT_SUPPORTED' }];
+      if (путь === '/v1/order/dbs/list') return список('orders', [заказМв('D1', 'A2')]);
+      if (путь === '/v1/order/fbo/list') return список('orders', [заказМв('B1', 'A3')]);
+      return [401];
+    });
+    try {
+      const { книга } = поддельнаяКнига({});
+      const м = await свежийМв('ons-bearer-данные');
+      assert.match(await м.мвЗаказыFbs(ЗАДАЧА), /заказов FBS 1, DBS 1,.*, ключ в Authorization: Bearer$/);
+      assert.match(await м.мвЗаказыFbo(ЗАДАЧА), /^заказов FBO 1, .*, ключ в Authorization: Bearer$/);
+      assert.ok((книга.get('Заказы Мвидео FBS') || []).some((р) => String(р[0]).includes('D1')));
+      assert.ok((книга.get('Заказы Мвидео FBO') || []).some((р) => String(р[0]).includes('B1')));
     } finally {
       шлюз.вернуть();
     }
