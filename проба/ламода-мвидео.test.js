@@ -216,9 +216,9 @@ test('М.Видео: нет строк на складе площадки — о
     ? { stocks: [{ offer_id: 'СВОЙ', location_id: 'wh-1', count: 5 }] }
     : { locations: [] });
   await assert.rejects(мвОстаткиFboСтроки(вызов), (е) => {
-    assert.match(е.message, /нет строк на складах площадки/);
-    assert.match(е.message, /всего пришло 1, из них со своего склада 1/);
-    assert.match(е.message, /лист не перезаписан/);
+    assert.match(е.message, /ненулевых остатков на складах площадки нет/);
+    assert.match(е.message, /пришло 1: нулевых 0, на складе площадки 0, на своём складе 1, без склада 0/);
+    assert.match(е.message, /Лист не перезаписан/);
     return true;
   });
 });
@@ -234,4 +234,109 @@ test('М.Видео: сбой справочника складов площад
   // 404 или «не подключено» — пережить можно (снимок, имя вернётся следующим прогоном);
   // 500 — нет: это не «метода нет», а сбой, и молчать о нём нельзя
   await assert.rejects(мвОстаткиFboСтроки(вызов), /HTTP 500/);
+});
+
+// ─────────────────── Ламода: карточки заказов ───────────────────
+
+const ошибка404 = (путь) => new Error(`Lamoda ${путь}: HTTP 404 {"error":{"code":"NOT_FOUND","message":"Not Found"}}`);
+
+test('Ламода: 404 на карточке одного заказа не роняет выгрузку остальных', async () => {
+  const { карточкиЗаказов } = await import('../src/lamoda.js');
+  const получить = async (путь) => {
+    if (путь.includes('RU261105-215938')) throw ошибка404(путь);
+    return { orderId: путь.split('/').pop(), items: [] };
+  };
+  const { полные, ненайдены } = await карточкиЗаказов(
+    [{ orderId: 'RU261101-000001' }, { orderId: 'RU261105-215938' }], получить, 0);
+  assert.equal(полные.length, 1, 'карточка найденного заказа должна прийти');
+  assert.deepEqual(ненайдены, ['RU261105-215938'], 'ненайденный заказ надо назвать, а не потерять молча');
+});
+
+test('Ламода: на 404 пробуется второй номер заказа из шапки', async () => {
+  const { карточкиЗаказов } = await import('../src/lamoda.js');
+  const спрошено = [];
+  const получить = async (путь) => {
+    спрошено.push(путь);
+    if (путь.endsWith('/RU261105-215938')) throw ошибка404(путь);
+    return { items: [] };
+  };
+  const { полные, ненайдены } = await карточкиЗаказов(
+    [{ orderId: 'RU261105-215938', id: '987654' }], получить, 0);
+  assert.equal(полные.length, 1);
+  assert.deepEqual(ненайдены, []);
+  assert.deepEqual(спрошено, ['/v2/orders/RU261105-215938', '/v2/orders/987654']);
+});
+
+test('Ламода: ни одной карточки — системная ошибка с перечнем полей шапки', async () => {
+  const { карточкиЗаказов } = await import('../src/lamoda.js');
+  const получить = async (путь) => { throw ошибка404(путь); };
+  await assert.rejects(
+    карточкиЗаказов([{ orderId: 'А', orderNr: 'Б', status: 'new' }, { orderId: 'В' }], получить, 0),
+    (е) => {
+      assert.match(е.message, /ни у одного из 2 заказов/);
+      assert.match(е.message, /Поля заказа в списке: orderId, orderNr, status/);
+      return true;
+    },
+  );
+});
+
+test('Ламода: не-404 на карточке по-прежнему роняет выгрузку', async () => {
+  const { карточкиЗаказов } = await import('../src/lamoda.js');
+  const получить = async () => { throw new Error('Lamoda /v2/orders/А: HTTP 500 сбой'); };
+  await assert.rejects(карточкиЗаказов([{ orderId: 'А' }], получить, 0), /HTTP 500/);
+});
+
+// ─────────────────── М.Видео: видно, откуда пришли данные ───────────────────
+
+test('М.Видео: запасной адрес виден в «Результате», основной — нет', async () => {
+  const { пометкаАдреса } = await import('../src/mvideo.js');
+  const адреса = ['https://omni-net.sellers.mvideo.ru', 'https://api.omniom.ru'];
+  assert.equal(пометкаАдреса(0, адреса), '');
+  assert.equal(пометкаАдреса(1, адреса), ', ЧЕРЕЗ ЗАПАСНОЙ АДРЕС api.omniom.ru');
+});
+
+test('М.Видео: без FBO-строк — разбивка ответа и имена полей, а не «со своего склада 0»', async () => {
+  const { мвОстаткиFboСтроки } = await import('../src/mvideo.js');
+  // ровно случай из книги: сорок строк, ни одна не узнана. Здесь — потому что
+  // количество зовётся иначе: код его не видит и считает строку нулевой
+  const stocks = Array.from({ length: 40 }, (_, i) => ({ offer_id: `A${i}`, quantity: 5, warehouse_id: 'w' }));
+  const вызов = async (путь) => (путь === '/v1/product/stock/info' ? { stocks } : { locations: [] });
+  await assert.rejects(мвОстаткиFboСтроки(вызов), (е) => {
+    assert.match(е.message, /пришло 40: нулевых 40/);
+    assert.match(е.message, /без склада 40/);
+    assert.match(е.message, /поля строки: offer_id, quantity, warehouse_id/);
+    assert.doesNotMatch(е.message, /со своего склада 0/, 'прежний текст вводил в заблуждение');
+    return true;
+  });
+});
+
+test('М.Видео: ошибка запроса называет адрес, с которого пришла', async () => {
+  // «404» шлюза М.Видео и «404» запасного api.omniom.ru неотличимы по тексту,
+  // а значат совершенно разное: «метода нет у М.Видео» против «ходим не туда»
+  const http = await import('node:http');
+  const сервер = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{"error_type":"ERROR_TYPE_UNSPECIFIED","message":"not found"}');
+    });
+  });
+  await new Promise((r) => сервер.listen(0, '127.0.0.1', r));
+  const адрес = `http://127.0.0.1:${сервер.address().port}`;
+  const было = { url: process.env.MVIDEO_API_URL, ключ: process.env.MVIDEO_API_KEY };
+  process.env.MVIDEO_API_URL = адрес;
+  process.env.MVIDEO_API_KEY = 'test-key';
+  try {
+    const м = await import(`../src/mvideo.js?адрес=${Math.random()}`);
+    await assert.rejects(м.мвОбход('/v1/order/fbo/list', 'orders'), (е) => {
+      assert.match(е.message, /HTTP 404/);
+      assert.ok(е.message.includes(`[127.0.0.1:${сервер.address().port}]`),
+        `в ошибке нет адреса: ${е.message}`);
+      return true;
+    });
+  } finally {
+    сервер.close();
+    if (было.url === undefined) delete process.env.MVIDEO_API_URL; else process.env.MVIDEO_API_URL = было.url;
+    if (было.ключ === undefined) delete process.env.MVIDEO_API_KEY; else process.env.MVIDEO_API_KEY = было.ключ;
+  }
 });
