@@ -1,6 +1,6 @@
 # Весь код одним документом
 
-Собрано командой `npm run свод`. Код взят на коммите `fcb0cd2` —
+Собрано командой `npm run свод`. Код взят на коммите `3f46221` —
 это последний коммит, менявший `src/`.
 
 > Это **снимок**. Источник правды — каталог `src/`. Правьте там, свод
@@ -2704,7 +2704,7 @@ export const лмЗаказыFbs = (з) => лмЗаказы('Заказы Лам
 
 Коннекторы М.Видео: omninet, схемы FBS и DBS.
 
-Строк: 492
+Строк: 525
 
 ```js
 import { сохранить } from './sheets.js';
@@ -2719,26 +2719,41 @@ import { запрос, сон, вТаблицу, число, период, те�
  * дальше — `next_cursor` из ответа.
  *
  * Схема ключа. Стандарт omninet (omni-net.dev/spec/fbo/common/auth) велит для
- * всех схем — DBS, FBS, FBO — один способ: `Authorization: Bearer <token>`. А
- * OpenAPI шлюза М.Видео для FBS/FBO описывает ключ заголовком Api-Key; стандарт
- * сам называет это расхождением и обещает поправить «в ближайшей выкатке».
- * В проде шлюз М.Видео принимает ключ в `api-key` — с ним идут остатки и заказы
- * FBS, — поэтому `api-key` идёт первым. Но на 401 или 404 тот же запрос сразу
- * повторяется с одним `Authorization: Bearer`:
+ * всех схем — DBS, FBS, FBO — один способ: `Authorization: Bearer <token>`.
+ * Собственный OpenAPI стандарта для FBS/FBO пока описывает пару Client-Id +
+ * Api-Key; стандарт называет это расхождением и обещает поправить «в ближайшей
+ * выкатке». Документация шлюза М.Видео (omni-net.sellers.mvideo.ru/api-docs)
+ * описывает ключ в `api-key`, и в проде шлюз его принимает — с ним идут остатки
+ * и заказы FBS. Поэтому `api-key` идёт первым, а на 401 или 404 тот же запрос
+ * сразу повторяется с одним `Authorization: Bearer`:
  *   401 — ключ не принят этим способом; так будет, когда М.Видео перейдёт на
  *     Bearer, и без второй попытки в тот день упали бы все задачи М.Видео;
  *   404 — метода нет; но шлюз мог развести методы по схемам ключа, и проверить
  *     это стоит один запрос (FBO на api-key отвечает 404 — см. ниже).
- * Если вторая схема ответила не 401/404, метод живёт на ней: она запоминается
- * для метода, а после 401 первой — для всех (ключ сменил способ). Если обе
- * 401/404, ошибка называет ответ обеих. Оба заголовка сразу не шлются: стандарт
- * велит Bearer один. До 02.11.2026 слались оба, и шлюз тогда отвечал «HTTP 400»
- * на список товаров, но Bearer убрали в одной правке с перебором видов тела,
- * так что что именно лечило, не установлено.
  *
- * Запасной адрес api.omniom.ru получает ключ в обоих заголовках, как и раньше.
- * Адресов два: первый, который ответил не 404/401 и не сетевой ошибкой,
- * запоминается до конца работы. MVIDEO_API_URL, если задан, — единственный адрес.
+ * Главное правило: вторая попытка меняет исход, ТОЛЬКО ЕСЛИ ОНА ПРОШЛА. Тогда
+ * её данные и возвращаются. Не прошла — чем угодно, хоть 400, хоть сбоем
+ * связи, — ошибка та же, что была бы без неё: решает ответ первой схемы, а
+ * ответ второй дописывается справкой (без слова «HTTP», чтобы перебор видов
+ * тела, выбор адреса и терпимость к «DBS не подключён» смотрели на первую).
+ * У такой ошибки есть `статусы`: [ответ api-key, ответ Bearer].
+ *
+ * Запоминается только успех: для метода — схема, на которой он последний раз
+ * вернул данные (в том числе с первой попытки), а для всех ещё не ответивших
+ * методов — Bearer, если api-key получил 401, а Bearer прошёл. Неудача не
+ * запоминается никогда: проба, которая не прошла, не меняет следующий запрос.
+ * Первая версия этой правки (не попала в прод) запоминала Bearer и на его
+ * ошибке и давала его ответу решать — и роняла задачи FBS, где DBS не подключён.
+ *
+ * Оба заголовка сразу не шлются: стандарт велит Bearer один. До 02.11.2026
+ * слались оба, и шлюз тогда отвечал «HTTP 400» на список товаров, но Bearer
+ * убрали в одной правке с перебором видов тела, так что что именно лечило, не
+ * установлено.
+ *
+ * Запасной адрес api.omniom.ru получает ключ в обоих заголовках, как и раньше,
+ * и второй попытки там нет. Адресов два: первый, который ответил не 404/401 и
+ * не сетевой ошибкой, запоминается до конца работы. MVIDEO_API_URL, если задан,
+ * — единственный адрес.
  *
  * Первая страница списка. В спецификации у курсора и лимита нет ни границ,
  * ни обязательности, а шлюз на неподходящее тело отвечает голым «HTTP 400
@@ -2761,8 +2776,8 @@ import { запрос, сон, вТаблицу, число, период, те�
  * остатках все строки — со своего склада, со склада площадки ни одной. С
  * `Authorization: Bearer`, которого требует стандарт, FBO тогда не пробовали —
  * теперь вторая схема пробуется сама (см. «Схема ключа»), и ошибка FBO-заказов
- * называет ответ обеих. Код оставлен: он честно говорит об отсутствии FBO и не
- * трогает листы, а если М.Видео FBO включит — заработает сам.
+ * называет ответ каждой схемы. Код оставлен: он честно говорит об отсутствии
+ * FBO и не трогает листы, а если М.Видео FBO включит — заработает сам.
  *
  * Если у кабинета FBO не подключён, стандарт велит шлюзу отвечать
  * «400 OPERATION_NOT_SUPPORTED: операция недоступна для текущей конфигурации».
@@ -2801,14 +2816,14 @@ export function пометкаАдреса(номер = адрес, адреса
 }
 
 /**
- * Пометка для «Результата», если метод ходит со второй схемой ключа: значит,
- * шлюз перестал принимать `api-key` (или метод есть только под Bearer).
- * Это не сбой, но перемену в подключении должно быть видно.
+ * Пометка для «Результата»: хоть один из методов последний раз вернул данные
+ * с Bearer. Значит, шлюз перестал принимать `api-key`, или метод есть только
+ * под Bearer. Это не сбой, но перемену в подключении должно быть видно.
+ * Строится только по успехам: неудачная проба Bearer пометку не ставит.
  */
 export function пометкаСхемы(...пути) {
   if (наOmniom(АДРЕСА[адрес])) return '';
-  const вторая = пути.some((п) => (схемаМетода.get(п) ?? схема) === 1);
-  return вторая ? `, ключ в ${СХЕМЫ_КЛЮЧА[1]}` : '';
+  return пути.some((п) => схемаМетода.get(п) === 1) ? `, ключ в ${СХЕМЫ_КЛЮЧА[1]}` : '';
 }
 
 /** Ответ, после которого стоит попробовать другой адрес: не тот хост или не та авторизация. */
@@ -2817,9 +2832,9 @@ const другойАдрес = (е) => /HTTP 40[14]|fetch failed|ENOTFOUND|EAI_A
 
 /** Схемы ключа на шлюзе М.Видео — по порядку попытки (см. «Схема ключа» в шапке). */
 export const СХЕМЫ_КЛЮЧА = ['api-key', 'Authorization: Bearer'];
-/** Схема для всех методов: меняется, только если первая получила 401, а вторая прошла. */
+/** Схема для ещё не ответивших методов: Bearer — только после «api-key 401, Bearer прошёл». */
 let схема = 0;
-/** Схема, на которой метод ответил не 401/404: путь → номер в СХЕМЫ_КЛЮЧА. */
+/** Схема, на которой метод последний раз ВЕРНУЛ ДАННЫЕ: путь → номер в СХЕМЫ_КЛЮЧА. */
 const схемаМетода = new Map();
 
 const наOmniom = (хост) => /omniom\./i.test(хост);
@@ -2843,40 +2858,46 @@ const неТаСхема = (е) => [401, 404].includes(статусОшибки(
 
 /**
  * Один запрос на один адрес: схемой метода, а на 401/404 — ещё раз другой.
- * У ошибки после обеих попыток `статусы` — ответ каждой схемы по порядку:
- * по нему видно, «метода нет» это или «ключ не принят».
+ * Исход меняет только удачная вторая попытка (см. «Главное правило» в шапке).
  */
 export async function сКлючом(хост, путь, тело, ключ, звать = запрос, попыток = 5) {
   const пойти = (сх) => звать(хост + путь,
     { method: 'POST', body: JSON.stringify(тело), headers: заголовки(хост, ключ, сх) },
     { имя: `М.Видео ${путь}`, пауза: 2000, попыток });
-  const сх = схемаМетода.get(путь) ?? схема;
+  const omniom = наOmniom(хост);
+  const сх = omniom ? 0 : (схемаМетода.get(путь) ?? схема);
+  let е;
   try {
-    return await пойти(сх);
-  } catch (е) {
-    if (наOmniom(хост) || !неТаСхема(е)) throw е;
-    const другая = 1 - сх;
-    try {
-      const ответ = await пойти(другая);
-      схемаМетода.set(путь, другая);
-      if (статусОшибки(е) === 401) схема = другая;
-      return ответ;
-    } catch (е2) {
-      if (!неТаСхема(е2)) {
-        // метод на другой схеме есть, ответ — его собственный (400, 429, 500):
-        // дальше, в том числе при переборе видов тела, ходим ею же
-        схемаМетода.set(путь, другая);
-        е2.message = `${е2.message} (ключ в ${СХЕМЫ_КЛЮЧА[другая]}; в ${СХЕМЫ_КЛЮЧА[сх]} — `
-          + `${статусОшибки(е)})`;
-        throw е2;
-      }
-      // «HTTP» в пометку не пишем: по «HTTP 400» и «HTTP 40[14]» решают перебор
-      // видов тела и выбор адреса, а решать они должны по ответу первой схемы
-      const ответ2 = String(е2.message).replace(/^.*?: HTTP /, '').slice(0, 200);
-      е.message = `${е.message} (ключ в ${СХЕМЫ_КЛЮЧА[сх]}); в ${СХЕМЫ_КЛЮЧА[другая]} — ${ответ2}`;
-      е.статусы = [статусОшибки(е), статусОшибки(е2)];
-      throw е;
-    }
+    const ответ = await пойти(сх);
+    if (!omniom) схемаМетода.set(путь, сх);
+    return ответ;
+  } catch (ошибка) {
+    е = ошибка;
+  }
+  if (omniom) throw е;
+  if (!неТаСхема(е)) {
+    // ошибка на Bearer должна это говорить: иначе «HTTP 403» не отличить от
+    // ответа на api-key, а api-key при этом не пробовался вовсе
+    if (сх === 1) е.message = `${е.message} (ключ в ${СХЕМЫ_КЛЮЧА[1]})`;
+    throw е;
+  }
+  const другая = 1 - сх;
+  try {
+    const ответ = await пойти(другая);
+    схемаМетода.set(путь, другая);
+    if (статусОшибки(е) === 401) схема = другая;
+    return ответ;
+  } catch (е2) {
+    // вторая не прошла — решает ответ первой; ответ второй — только справка,
+    // и «HTTP» в ней нет: по «HTTP 400» и «HTTP 40x» решают перебор видов тела,
+    // выбор адреса и терпимость к неподключённому DBS
+    const ответ2 = String(е2?.message || е2).replace(/^М\.Видео [^:]*: /, '')
+      .replace(/HTTP (?=\d{3})/g, '').slice(0, 200);
+    е.message = `${е.message} (ключ в ${СХЕМЫ_КЛЮЧА[сх]}); в ${СХЕМЫ_КЛЮЧА[другая]} — ${ответ2}`;
+    е.статусы = [];
+    е.статусы[сх] = статусОшибки(е);
+    е.статусы[другая] = статусОшибки(е2);
+    throw е;
   }
 }
 
@@ -2894,14 +2915,13 @@ async function мв(путь, тело) {
         // с какого адреса пришла ошибка — иначе «404» шлюза М.Видео и «404»
         // запасного api.omniom.ru неотличимы, а значат совершенно разное
         const где = ` [${АДРЕСА[адрес].replace(/^https?:\/\//, '')}]`;
-        if (ошибки.length) {
-          throw Object.assign(new Error(`${е.message}${где}; до этого: ${ошибки.join('; ')}`),
-            { статусы: е.статусы });
-        }
+        if (ошибки.length) throw new Error(`${е.message}${где}; до этого: ${ошибки.join('; ')}`);
         е.message = `${е.message}${где}`;
         throw е;
       }
-      ошибки.push(`${АДРЕСА[адрес]}: ${String(е.message).slice(0, 120)}`);
+      // ответ шлюза М.Видео целиком, с ответом обеих схем ключа: обрезка до 120
+      // знаков оставляла от него «HTTP 404» и теряла, что сказал Bearer
+      ошибки.push(`${АДРЕСА[адрес]}: ${String(е.message).slice(0, 600)}`);
       адрес += 1;
     }
   }
@@ -3024,7 +3044,7 @@ export async function мвОстаткиFbs() {
   const строки = fbs.map((о) => мвСтрокаОстатка(о, имена, отметка));
   await сохранить('FBS остатки Мвидео', строки);
   return `складов ${имена.size}, строк ${строки.length}${пометкаАдреса()}`
-       + пометкаСхемы('/v1/product/stock/info');
+       + пометкаСхемы('/v1/product/stock/info', '/v1/merchant/location/list', '/v1/location/list');
 }
 
 /** Из чего состоит ответ остатков — для текста ошибки, когда разобрать его не вышло. */
@@ -3088,7 +3108,7 @@ export async function мвОстаткиFbo() {
   await сохранить('FBO остатки Мвидео', строки);
   return `складов площадки ${складов}, строк ${строки.length}`
        + (безИмени ? `, без имени склада ${безИмени}` : '') + пометкаАдреса()
-       + пометкаСхемы('/v1/product/stock/info');
+       + пометкаСхемы('/v1/product/stock/info', '/v1/market/location/list');
 }
 
 const ЦЕНЫ = ['CUSTOMER_FINAL_PRICE', 'CUSTOMER_PRICE', 'MERCHANT_FINAL_PRICE', 'MERCHANT_PRICE'];
@@ -3151,22 +3171,35 @@ export function мвСтрокаЗаказаFbo(з, отметка) {
     текстом(з.offer_id) || '-', штук, мвЦена(з.prices), з.status || '-', отметка];
 }
 
+/** Ответ каждой схемы ключа словами: «api-key — 404, Authorization: Bearer — 401». */
+const поСхемам = (с) => СХЕМЫ_КЛЮЧА.map((имя, i) => `${имя} — ${с[i] || 'без HTTP-ответа'}`).join(', ');
+
 /**
- * Текст ошибки заказов FBO. 404 на обе схемы ключа — «метода нет»; ответ шлюза
- * при этом не выбрасывается: по его телу видно, что именно ответил шлюз.
- * Если же схемы ответили по-разному (404 и 401), это не «метода нет», и ошибка
- * уходит как есть — с ответом каждой.
+ * Текст ошибки заказов FBO. Различает три случая, и ответ шлюза в каждом
+ * остаётся в тексте — по его телу видно, что именно шлюз сказал:
+ *   OPERATION_NOT_SUPPORTED — FBO кабинету не подключён;
+ *   404 на обеих схемах ключа — метода на этом адресе нет;
+ *   схемы ответили по-разному (404 и 401, 404 и 400) — это НЕ «метода нет»:
+ *     текст начинается с ответа каждой схемы, а не с «HTTP 404».
  */
 export function ошибкаЗаказовFbo(е, хост) {
+  const ответ = `. Ответ шлюза: ${е.message}`;
   if (неПодключено(е)) {
     return new Error('М.Видео: FBO для этого кабинета не подключён — шлюз ответил '
-      + `OPERATION_NOT_SUPPORTED на /v1/order/fbo/list [${хост}]`);
+      + `OPERATION_NOT_SUPPORTED на /v1/order/fbo/list [${хост}]${ответ}`);
   }
-  const статусы = е.статусы ?? [статусОшибки(е)];
-  if (статусы.every((с) => с === 404)) {
-    const как = е.статусы ? `ни с ключом в ${СХЕМЫ_КЛЮЧА.join(', ни с ')}` : 'с ключом в обоих заголовках';
-    return new Error(`М.Видео: на шлюзе ${хост} нет метода /v1/order/fbo/list ${как} (HTTP 404) `
-      + `— FBO-заказы этим адресом не отдаются. Ответ шлюза: ${е.message}`);
+  const с = е.статусы;
+  if (с && с[0] === 404 && с[1] === 404) {
+    return new Error(`М.Видео: на шлюзе ${хост} нет метода /v1/order/fbo/list ни с одной схемой `
+      + `ключа (${поСхемам(с)}) — FBO-заказы этим адресом не отдаются${ответ}`);
+  }
+  if (с) {
+    return new Error(`М.Видео: /v1/order/fbo/list на шлюзе ${хост} не отдал заказы ни с одной `
+      + `схемой ключа: ${поСхемам(с)}${ответ}`);
+  }
+  if (статусОшибки(е) === 404) {
+    return new Error(`М.Видео: на шлюзе ${хост} нет метода /v1/order/fbo/list (HTTP 404) `
+      + `— FBO-заказы этим адресом не отдаются${ответ}`);
   }
   return е;
 }
@@ -4074,7 +4107,7 @@ test('сбой необязательной площадки не валит к�
 
 ## проба/ламода-мвидео.test.js
 
-Строк: 494
+Строк: 702
 
 ```js
 import test from 'node:test';
@@ -4426,19 +4459,24 @@ test('М.Видео: ошибка запроса называет адрес, с
 });
 
 /* ── Схема ключа М.Видео: api-key, а на 401/404 — Bearer (omni-net.dev/spec/fbo/common/auth) ──
+ * Главное правило: вторая попытка меняет исход, только если она прошла.
  * Каждая проба берёт свой экземпляр модуля: выбранная схема живёт до конца
- * процесса, и проба, переключившая её для всех методов, не должна влиять на другие. */
+ * процесса, и проба, переключившая её, не должна влиять на другие. */
 const свежийМв = (метка) => import(`../src/mvideo.js?схема=${метка}`);
 const МВИДЕО = 'https://omni-net.sellers.mvideo.ru';
+const числоHTTP = (е) => (е.message.match(/HTTP \d{3}/g) || []).length;
 
-/** Поддельный `запрос()`: отвечает по заголовку ключа, записывает, каким способом звали. */
+/** Поддельный `запрос()`: отвечает по схеме ключа, записывает, каким способом звали. */
 function поддельныйЗапрос(ответы) {
   const звали = [];
   const звать = async (url, опции, { имя }) => {
-    const сх = опции.headers.Authorization ? 'Bearer' : 'api-key';
+    const з = опции.headers;
+    const сх = з.Authorization && з['api-key'] ? 'оба' : (з.Authorization ? 'Bearer' : 'api-key');
     const путь = url.replace(/^https?:\/\/[^/]+/, '');
     звали.push(`${путь} ${сх}`);
-    const ответ = ответы(путь, сх, опции.headers);
+    const ответ = ответы(путь, сх);
+    if (ответ === 'сеть') throw new Error(`${имя}: fetch failed`);
+    if (ответ === 'не JSON') throw new Error(`${имя}: ответ не JSON: <html>`);
     if (typeof ответ === 'number') {
       throw new Error(`${имя}: HTTP ${ответ} {"message":"ответ ${ответ} на ${сх}"}`);
     }
@@ -4447,15 +4485,24 @@ function поддельныйЗапрос(ответы) {
   return { звать, звали };
 }
 
-test('М.Видео: 401 на api-key — тот же запрос с Bearer, и дальше Bearer для всех методов', async () => {
+test('М.Видео: 401 на api-key — Bearer; дальше Bearer для новых методов, а не для уже ответивших', async () => {
   const м = await свежийМв('401');
-  const { звать, звали } = поддельныйЗапрос((путь, сх) => (сх === 'api-key' ? 401 : { ok: путь }));
-  assert.deepEqual(await м.сКлючом(МВИДЕО, '/v1/a', {}, 'k', звать), { ok: '/v1/a' });
-  assert.deepEqual(звали, ['/v1/a api-key', '/v1/a Bearer']);
-  // ключ сменил способ — другой метод сразу идёт с Bearer, без лишнего 401
-  assert.deepEqual(await м.сКлючом(МВИДЕО, '/v1/b', {}, 'k', звать), { ok: '/v1/b' });
-  assert.deepEqual(звали.slice(2), ['/v1/b Bearer']);
+  const { звать, звали } = поддельныйЗапрос((путь, сх) => {
+    if (путь === '/v1/старый') return { ok: сх };              // отвечает на любой схеме
+    return сх === 'api-key' ? 401 : { ok: сх };
+  });
+  await м.сКлючом(МВИДЕО, '/v1/старый', {}, 'k', звать);       // ответил с api-key
+  assert.deepEqual(await м.сКлючом(МВИДЕО, '/v1/a', {}, 'k', звать), { ok: 'Bearer' });
+  await м.сКлючом(МВИДЕО, '/v1/b', {}, 'k', звать);
+  await м.сКлючом(МВИДЕО, '/v1/старый', {}, 'k', звать);
+  assert.deepEqual(звали, ['/v1/старый api-key', '/v1/a api-key', '/v1/a Bearer',
+    // новый метод — сразу Bearer; ответивший с api-key — по-прежнему api-key
+    '/v1/b Bearer', '/v1/старый api-key']);
   assert.equal(м.пометкаСхемы('/v1/b'), ', ключ в Authorization: Bearer');
+  assert.equal(м.пометкаСхемы('/v1/старый'), '');
+  // пометка — только по успехам: метод, который ни разу не ответил, её не ставит,
+  // даже когда общая схема уже Bearer
+  assert.equal(м.пометкаСхемы('/v1/ни-разу'), '');
 });
 
 test('М.Видео: 404 на api-key, а с Bearer метод есть — Bearer только для этого метода', async () => {
@@ -4472,74 +4519,271 @@ test('М.Видео: 404 на api-key, а с Bearer метод есть — Bear
   assert.equal(м.пометкаСхемы('/v1/order/fbs/list'), '');
 });
 
-test('М.Видео: 404 на обеих схемах — ошибка с ответом каждой, решают по первой', async () => {
-  const м = await свежийМв('404-оба');
-  const { звать, звали } = поддельныйЗапрос(() => 404);
-  await assert.rejects(м.сКлючом(МВИДЕО, '/v1/order/fbo/list', {}, 'k', звать), (е) => {
-    assert.deepEqual(е.статусы, [404, 404]);
-    assert.match(е.message, /ответ 404 на api-key/);
-    assert.match(е.message, /в Authorization: Bearer — 404 .*ответ 404 на Bearer/);
-    // «HTTP» в тексте один раз — от первой схемы: по нему решают выбор адреса
-    // и перебор видов тела, и ответ второй их сбивать не должен
-    assert.equal(е.message.match(/HTTP \d{3}/g).length, 1);
-    assert.equal(м.статусОшибки(е), 404);
-    return true;
-  });
-  assert.deepEqual(звали, ['/v1/order/fbo/list api-key', '/v1/order/fbo/list Bearer']);
-  assert.equal(м.пометкаСхемы('/v1/order/fbo/list'), '');
-});
-
-test('М.Видео: вторая схема ответила 400 — это её ответ, и дальше метод идёт ею', async () => {
-  const м = await свежийМв('400');
-  const { звать, звали } = поддельныйЗапрос((путь, сх) => (сх === 'api-key' ? 404 : 400));
-  await assert.rejects(м.сКлючом(МВИДЕО, '/v1/c', {}, 'k', звать), (е) => {
-    // «HTTP 400» второй схемы — настоящий: на нём перебираются виды тела
-    assert.match(е.message, /HTTP 400 .*ответ 400 на Bearer/);
-    assert.match(е.message, /\(ключ в Authorization: Bearer; в api-key — 404\)/);
-    return true;
-  });
-  await assert.rejects(м.сКлючом(МВИДЕО, '/v1/c', {}, 'k', звать));
-  assert.deepEqual(звали, ['/v1/c api-key', '/v1/c Bearer', '/v1/c Bearer']);
-});
-
-test('М.Видео: 400, 500 и сетевые ошибки другую схему не пробуют; omniom — тоже', async () => {
-  const м = await свежийМв('прочие');
-  for (const код of [400, 429, 500]) {
-    const { звать, звали } = поддельныйЗапрос(() => код);
-    await assert.rejects(м.сКлючом(МВИДЕО, `/v1/код${код}`, {}, 'k', звать), new RegExp(`HTTP ${код}`));
-    assert.equal(звали.length, 1, `на ${код} была вторая попытка`);
+test('М.Видео: Bearer не прошёл ничем — ошибка та же, что без него, и следующий запрос снова с api-key', async () => {
+  // главное правило: проба, которая не прошла, не меняет ни исход, ни следующий
+  // запрос. Иначе «DBS не подключён» (404, его терпят) превращается в падение
+  // задачи FBS из-за ответа Bearer, а один сбой связи закрепляет Bearer навсегда
+  for (const [ответBearer, статус] of [[404, 404], [401, 401], [400, 400], [403, 403],
+    [429, 429], [500, 500], ['сеть', 0], ['не JSON', 0]]) {
+    const м = await свежийМв(`провал-${ответBearer}`);
+    const { звать, звали } = поддельныйЗапрос((путь, сх) => (сх === 'api-key' ? 404 : ответBearer));
+    for (let прогон = 0; прогон < 2; прогон += 1) {
+      await assert.rejects(м.сКлючом(МВИДЕО, '/v1/order/dbs/list', {}, 'k', звать), (е) => {
+        assert.equal(м.статусОшибки(е), 404, `Bearer ${ответBearer}: решать должен ответ api-key`);
+        assert.equal(числоHTTP(е), 1, `Bearer ${ответBearer}: «HTTP» второй схемы попал в текст`);
+        assert.match(е.message, /\(ключ в api-key\); в Authorization: Bearer — /);
+        assert.deepEqual(е.статусы, [404, статус]);
+        return true;
+      });
+    }
+    assert.deepEqual(звали, ['/v1/order/dbs/list api-key', '/v1/order/dbs/list Bearer',
+      '/v1/order/dbs/list api-key', '/v1/order/dbs/list Bearer'], `Bearer ${ответBearer}`);
+    assert.equal(м.пометкаСхемы('/v1/order/dbs/list'), '', `Bearer ${ответBearer}: пометка без успеха`);
   }
-  const сеть = async () => { throw new Error('М.Видео /v1/d: fetch failed'); };
-  await assert.rejects(м.сКлючом(МВИДЕО, '/v1/d', {}, 'k', сеть), /fetch failed/);
-  // на omniom ключ и так уходит обоими заголовками — второй попытке нечего менять
-  const { звать, звали } = поддельныйЗапрос((путь, сх, з) => {
-    assert.equal(з['api-key'], 'k');
-    assert.equal(з.Authorization, 'Bearer k');
-    return 401;
-  });
-  await assert.rejects(м.сКлючом('https://api.omniom.ru', '/v1/e', {}, 'k', звать), /HTTP 401/);
-  assert.equal(звали.length, 1);
 });
 
-test('М.Видео: текст ошибки заказов FBO различает «метода нет» и «ключ не принят»', async () => {
+test('М.Видео: OPERATION_NOT_SUPPORTED от Bearer виден, но решает по-прежнему ответ api-key', async () => {
+  const м = await свежийМв('не-подключено');
+  const { звать } = поддельныйЗапрос((путь, сх) => {
+    if (сх === 'api-key') return 404;
+    throw new Error(`М.Видео ${путь}: HTTP 400 {"code":"OPERATION_NOT_SUPPORTED"}`);
+  });
+  await assert.rejects(м.сКлючом(МВИДЕО, '/v1/order/fbo/list', {}, 'k', звать), (е) => {
+    assert.equal(м.статусОшибки(е), 404);
+    assert.ok(м.неПодключено(е));
+    return true;
+  });
+});
+
+test('М.Видео: обратный ход — Bearer стал основным, метод с ним 404, а с api-key отвечает', async () => {
+  const м = await свежийМв('обратно');
+  const { звать, звали } = поддельныйЗапрос((путь, сх) => {
+    if (путь === '/v1/a') return сх === 'api-key' ? 401 : { ok: сх };
+    return сх === 'Bearer' ? 404 : { ok: сх };
+  });
+  await м.сКлючом(МВИДЕО, '/v1/a', {}, 'k', звать);          // переводит всех на Bearer
+  assert.deepEqual(await м.сКлючом(МВИДЕО, '/v1/c', {}, 'k', звать), { ok: 'api-key' });
+  await м.сКлючом(МВИДЕО, '/v1/c', {}, 'k', звать);
+  assert.deepEqual(звали.slice(2), ['/v1/c Bearer', '/v1/c api-key', '/v1/c api-key']);
+  assert.equal(м.пометкаСхемы('/v1/c'), '');
+});
+
+test('М.Видео: 400, 429, 500, сеть — без второй попытки и без памяти; ошибка на Bearer это говорит', async () => {
+  const м = await свежийМв('прочие');
+  for (const ответ of [400, 429, 500, 'сеть']) {
+    const путь = `/v1/код-${ответ}`;
+    const { звать, звали } = поддельныйЗапрос(() => ответ);
+    await assert.rejects(м.сКлючом(МВИДЕО, путь, {}, 'k', звать), (е) => {
+      assert.ok(!е.message.includes('ключ в'), `пометка схемы без второй попытки: ${е.message}`);
+      return true;
+    });
+    assert.deepEqual(звали, [`${путь} api-key`], `на ${ответ} была вторая попытка`);
+    assert.equal(м.пометкаСхемы(путь), '');
+  }
+  // метод уже ходит с Bearer — его ошибка говорит, каким ключом шли
+  let раз = 0;
+  const { звать } = поддельныйЗапрос((путь, сх) => {
+    раз += 1;
+    if (раз === 1) return 404;                              // api-key
+    if (раз === 2) return { ok: сх };                       // Bearer прошёл
+    return 403;
+  });
+  await м.сКлючом(МВИДЕО, '/v1/e', {}, 'k', звать);
+  await assert.rejects(м.сКлючом(МВИДЕО, '/v1/e', {}, 'k', звать), (е) => {
+    assert.match(е.message, /HTTP 403 .*\(ключ в Authorization: Bearer\)$/);
+    return true;
+  });
+});
+
+test('М.Видео: на omniom ключ обоими заголовками, второй попытки и памяти нет', async () => {
+  const м = await свежийМв('omniom');
+  const { звать, звали } = поддельныйЗапрос(() => 401);
+  await assert.rejects(м.сКлючом('https://api.omniom.ru', '/v1/f', {}, 'k', звать), /HTTP 401/);
+  assert.deepEqual(звали, ['/v1/f оба']);
+});
+
+test('М.Видео: ошибка заказов FBO — «метода нет» только при 404 на обеих схемах', async () => {
   const м = await свежийМв('fbo-ошибка');
   const хост = 'omni-net.sellers.mvideo.ru';
-  const оба404 = Object.assign(new Error('М.Видео /v1/order/fbo/list: HTTP 404 {"x":1} '
-    + '(ключ в api-key); в Authorization: Bearer — 404 {"y":2} [omni-net.sellers.mvideo.ru]'),
-  { статусы: [404, 404] });
-  const текст = м.ошибкаЗаказовFbo(оба404, хост).message;
-  assert.match(текст, /нет метода \/v1\/order\/fbo\/list ни с ключом в api-key, ни с Authorization: Bearer/);
-  // ответ шлюза не выбрасывается: по телу видно, что именно он сказал
-  assert.match(текст, /\{"x":1\}.*\{"y":2\}/);
-  // 404 на api-key, но 401 на Bearer — это не «метода нет»: ошибка как есть
-  const разные = Object.assign(new Error('М.Видео /v1/order/fbo/list: HTTP 404 {} '
-    + '(ключ в api-key); в Authorization: Bearer — 401 {}'), { статусы: [404, 401] });
-  assert.equal(м.ошибкаЗаказовFbo(разные, хост), разные);
+  const ошибка = (статусы, текст = 'М.Видео /v1/order/fbo/list: HTTP 404 {"x":1} (ключ в api-key); '
+    + 'в Authorization: Bearer — 404 {"y":2}') => Object.assign(new Error(текст), { статусы });
+  const нет = м.ошибкаЗаказовFbo(ошибка([404, 404]), хост).message;
+  assert.match(нет, /нет метода \/v1\/order\/fbo\/list ни с одной схемой ключа \(api-key — 404, Authorization: Bearer — 404\)/);
+  assert.match(нет, /\{"x":1\}.*\{"y":2\}/);                // ответ шлюза не выбрасывается
+  for (const [статусы, слова] of [[[404, 401], 'api-key — 404, Authorization: Bearer — 401'],
+    [[401, 404], 'api-key — 401, Authorization: Bearer — 404'],
+    [[404, 400], 'api-key — 404, Authorization: Bearer — 400'],
+    [[404, 0], 'api-key — 404, Authorization: Bearer — без HTTP-ответа']]) {
+    const т = м.ошибкаЗаказовFbo(ошибка(статусы), хост).message;
+    assert.ok(!т.includes('нет метода'), `${статусы}: это не «метода нет»: ${т}`);
+    assert.ok(т.startsWith(`М.Видео: /v1/order/fbo/list на шлюзе ${хост} не отдал заказы ни с одной `
+      + `схемой ключа: ${слова}`), т);
+  }
   const неПодкл = new Error('М.Видео /v1/order/fbo/list: HTTP 400 {"code":"OPERATION_NOT_SUPPORTED"}');
-  assert.match(м.ошибкаЗаказовFbo(неПодкл, хост).message, /FBO для этого кабинета не подключён/);
-  // omniom: одна попытка с обоими заголовками, статусов по схемам нет
-  const omniom = new Error('М.Видео /v1/order/fbo/list: HTTP 404 {}');
-  assert.match(м.ошибкаЗаказовFbo(omniom, 'api.omniom.ru').message, /с ключом в обоих заголовках/);
+  assert.match(м.ошибкаЗаказовFbo(неПодкл, хост).message,
+    /FBO для этого кабинета не подключён .*Ответ шлюза: .*OPERATION_NOT_SUPPORTED/);
+  const omniom = new Error('М.Видео /v1/order/fbo/list: HTTP 404 {"z":3}');
+  assert.match(м.ошибкаЗаказовFbo(omniom, 'api.omniom.ru').message, /нет метода .*\(HTTP 404\).*\{"z":3\}/);
+  const прочая = new Error('М.Видео /v1/order/fbo/list: HTTP 500 {}');
+  assert.equal(м.ошибкаЗаказовFbo(прочая, хост), прочая);
+});
+
+/* ── Задачи М.Видео целиком: поддельный шлюз (fetch) и поддельная книга ── */
+
+/** Подменяет fetch: ответ по пути и схеме ключа; записывает, кого и как звали. */
+function поддельныйШлюз(ответить) {
+  const звали = [];
+  const было = globalThis.fetch;
+  globalThis.fetch = async (url, опции) => {
+    const u = new URL(url);
+    const з = опции.headers;
+    const сх = з.Authorization && з['api-key'] ? 'оба' : (з.Authorization ? 'Bearer' : 'api-key');
+    звали.push(`${u.host}${u.pathname} ${сх}`);
+    const [статус, тело] = ответить(u.pathname, сх, u.host);
+    return new Response(JSON.stringify(тело ?? { message: `ответ ${статус} на ${сх}` }),
+      { status: статус, headers: { 'content-type': 'application/json' } });
+  };
+  return { звали, вернуть: () => { globalThis.fetch = было; } };
+}
+
+/** Окружение задачи: адрес шлюза, ключ, книга; после — всё как было. */
+async function вОкружении(адрес, тело) {
+  const было = { url: process.env.MVIDEO_API_URL, ключ: process.env.MVIDEO_API_KEY };
+  if (адрес) process.env.MVIDEO_API_URL = адрес; else delete process.env.MVIDEO_API_URL;
+  process.env.MVIDEO_API_KEY = 'test-key';
+  try {
+    return await тело();
+  } finally {
+    if (было.url === undefined) delete process.env.MVIDEO_API_URL; else process.env.MVIDEO_API_URL = было.url;
+    if (было.ключ === undefined) delete process.env.MVIDEO_API_KEY; else process.env.MVIDEO_API_KEY = было.ключ;
+  }
+}
+
+const заказМв = (номер, артикул) => ({ merchant_order_id: номер, created_at: '2026-11-05T10:00:00+03:00',
+  offer_id: артикул, prices: [{ price_type: 'CUSTOMER_PRICE', value: 150000 }], status: 'NEW' });
+const список = (поле, строки) => [200, { [поле]: строки, next_cursor: '' }];
+const ЗАДАЧА = { глубина: 7 };
+
+test('М.Видео, задача: DBS не подключён и Bearer отвечает 400/403 — FBS пишется, а DBS подхватится сам', async () => {
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  await вОкружении(МВИДЕО, async () => {
+    let dbsПодключён = false;
+    let ответBearer = 400;
+    const шлюз = поддельныйШлюз((путь, сх) => {
+      if (путь === '/v1/order/fbs/list') return список('orders', [заказМв('F1', 'A1')]);
+      if (путь === '/v1/order/dbs/list') {
+        if (dbsПодключён && сх === 'api-key') return список('orders', [заказМв('D1', 'A2')]);
+        return [сх === 'api-key' ? 404 : ответBearer];
+      }
+      return [500];
+    });
+    try {
+      const { книга } = поддельнаяКнига({});
+      const м = await свежийМв('задача-dbs');
+      const первый = await м.мвЗаказыFbs(ЗАДАЧА);
+      assert.match(первый, /заказов FBS 1, DBS 0, DBS недоступен/);
+      assert.ok(!первый.includes('ключ в'), первый);
+      assert.ok((книга.get('Заказы Мвидео FBS') || []).some((р) => String(р[0]).includes('F1')));
+      ответBearer = 403;
+      assert.match(await м.мвЗаказыFbs(ЗАДАЧА), /DBS 0, DBS недоступен/);
+      // DBS подключили — следующий прогон берёт его с api-key, без перезапуска
+      dbsПодключён = true;
+      assert.match(await м.мвЗаказыFbs(ЗАДАЧА), /заказов FBS 1, DBS 1,/);
+      assert.ok((книга.get('Заказы Мвидео FBS') || []).some((р) => String(р[0]).includes('D1')));
+      const dbs = шлюз.звали.filter((з) => з.includes('/v1/order/dbs/list'));
+      assert.deepEqual(dbs.map((з) => з.split(' ')[1]), ['api-key', 'Bearer', 'api-key', 'Bearer', 'api-key']);
+    } finally {
+      шлюз.вернуть();
+    }
+  });
+});
+
+test('М.Видео, задача: заказы FBO — текст ошибки по ответу каждой схемы, а с Bearer — данные и пометка', async () => {
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  await вОкружении(МВИДЕО, async () => {
+    let ответBearer = [404];
+    const шлюз = поддельныйШлюз((путь, сх) => (сх === 'api-key' ? [404] : ответBearer));
+    try {
+      const { книга } = поддельнаяКнига({});
+      await assert.rejects((await свежийМв('fbo-404')).мвЗаказыFbo(ЗАДАЧА),
+        /нет метода \/v1\/order\/fbo\/list ни с одной схемой ключа \(api-key — 404, Authorization: Bearer — 404\)/);
+      ответBearer = [401];
+      await assert.rejects((await свежийМв('fbo-401')).мвЗаказыFbo(ЗАДАЧА), (е) => {
+        assert.match(е.message, /^М\.Видео: \/v1\/order\/fbo\/list на шлюзе https:\/\/omni-net\.sellers\.mvideo\.ru не отдал заказы ни с одной схемой ключа: api-key — 404, Authorization: Bearer — 401/);
+        assert.ok(!е.message.includes('нет метода'));
+        return true;
+      });
+      ответBearer = список('orders', [заказМв('B1', 'A9')]);
+      const итог = await (await свежийМв('fbo-ok')).мвЗаказыFbo(ЗАДАЧА);
+      assert.match(итог, /^заказов FBO 1, .*, ключ в Authorization: Bearer$/);
+      assert.ok((книга.get('Заказы Мвидео FBO') || []).some((р) => String(р[0]).includes('B1')));
+    } finally {
+      шлюз.вернуть();
+    }
+  });
+});
+
+test('М.Видео, задачи: шлюз перешёл на Bearer — данные идут, и «Результат» каждой задачи это говорит', async () => {
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  await вОкружении(МВИДЕО, async () => {
+    const шлюз = поддельныйШлюз((путь, сх) => {
+      if (сх === 'api-key') return [401];
+      if (путь === '/v1/merchant/location/list') return список('locations', [{ location_id: 'L1', name: 'Склад' }]);
+      if (путь === '/v1/market/location/list') {
+        return список('locations', [{ market_location_id: 'M1', name: 'Склад площадки' }]);
+      }
+      if (путь === '/v1/product/stock/info') {
+        return список('stocks', [{ offer_id: 'A1', location_id: 'L1', count: 3, available_count: 3 },
+          { offer_id: 'A2', market_location_id: 'M1', count: 2, available_count: 2 }]);
+      }
+      if (путь === '/v1/order/fbs/list') return список('orders', [заказМв('F1', 'A1')]);
+      if (путь === '/v1/order/fbo/list') return список('orders', [заказМв('B1', 'A2')]);
+      return [404];                                          // DBS не подключён
+    });
+    try {
+      const { книга } = поддельнаяКнига({});
+      const м = await свежийМв('всё-на-bearer');
+      const пометка = /, ключ в Authorization: Bearer$/;
+      assert.match(await м.мвОстаткиFbs(), /^складов 1, строк 1, ключ в Authorization: Bearer$/);
+      assert.match(await м.мвОстаткиFbo(), пометка);
+      assert.match(await м.мвЗаказыFbs(ЗАДАЧА), /DBS недоступен.*, ключ в Authorization: Bearer$/);
+      assert.match(await м.мвЗаказыFbo(ЗАДАЧА), пометка);
+      assert.ok((книга.get('FBS остатки Мвидео') || []).some((р) => String(р[0]).includes('A1')));
+      assert.ok((книга.get('FBO остатки Мвидео') || []).some((р) => String(р[0]).includes('A2')));
+      assert.ok((книга.get('Заказы Мвидео FBS') || []).some((р) => String(р[0]).includes('F1')));
+      // api-key получил 401 один раз — дальше все новые методы сразу с Bearer;
+      // DBS (404 на Bearer) пробуется api-key и получает 401 — это его справка
+      assert.deepEqual(шлюз.звали.filter((з) => з.endsWith('api-key')).map((з) => з.split(' ')[0]), [
+        'omni-net.sellers.mvideo.ru/v1/merchant/location/list',
+        'omni-net.sellers.mvideo.ru/v1/location/list',
+        'omni-net.sellers.mvideo.ru/v1/order/dbs/list']);
+    } finally {
+      шлюз.вернуть();
+    }
+  });
+});
+
+test('М.Видео: при уходе на запасной адрес ответ Bearer шлюза М.Видео остаётся в ошибке', async () => {
+  // два адреса (MVIDEO_API_URL не задан): ответ М.Видео пишется в «до этого»,
+  // и раньше его обрезали до 120 знаков — от ответа Bearer не оставалось ничего
+  await вОкружении(undefined, async () => {
+    const шлюз = поддельныйШлюз((путь, сх, хост) => {
+      if (хост === 'api.omniom.ru') return [404, { message: 'omniom: нет такого' }];
+      return сх === 'api-key' ? [404, { message: 'x'.repeat(150) }] : [401, { message: 'Ошибка авторизации' }];
+    });
+    try {
+      const м = await свежийМв('два-адреса');
+      await assert.rejects(м.мвОбход('/v1/order/fbo/list', 'orders'), (е) => {
+        assert.match(е.message, /\[api\.omniom\.ru\]; до этого: https:\/\/omni-net\.sellers\.mvideo\.ru: /);
+        assert.match(е.message, /в Authorization: Bearer — 401 \{"message":"Ошибка авторизации"\}/);
+        return true;
+      });
+      assert.deepEqual(шлюз.звали, ['omni-net.sellers.mvideo.ru/v1/order/fbo/list api-key',
+        'omni-net.sellers.mvideo.ru/v1/order/fbo/list Bearer', 'api.omniom.ru/v1/order/fbo/list оба']);
+    } finally {
+      шлюз.вернуть();
+    }
+  });
 });
 
 test('М.Видео: до шлюза доходит один заголовок ключа, и на 404 вторая попытка идёт с Bearer', async () => {
@@ -4555,20 +4799,17 @@ test('М.Видео: до шлюза доходит один заголовок 
     });
   });
   await new Promise((r) => сервер.listen(0, '127.0.0.1', r));
-  const было = { url: process.env.MVIDEO_API_URL, ключ: process.env.MVIDEO_API_KEY };
-  process.env.MVIDEO_API_URL = `http://127.0.0.1:${сервер.address().port}`;
-  process.env.MVIDEO_API_KEY = 'test-key';
   try {
-    const м = await свежийМв(`сервер-${сервер.address().port}`);
-    assert.deepEqual(await м.мвОбход('/v1/order/fbo/list', 'orders'), []);
-    assert.deepEqual(пришло, [
-      { apiKey: 'test-key', auth: undefined },
-      { apiKey: undefined, auth: 'Bearer test-key' },
-    ]);
+    await вОкружении(`http://127.0.0.1:${сервер.address().port}`, async () => {
+      const м = await свежийМв(`сервер-${сервер.address().port}`);
+      assert.deepEqual(await м.мвОбход('/v1/order/fbo/list', 'orders'), []);
+      assert.deepEqual(пришло, [
+        { apiKey: 'test-key', auth: undefined },
+        { apiKey: undefined, auth: 'Bearer test-key' },
+      ]);
+    });
   } finally {
     сервер.close();
-    if (было.url === undefined) delete process.env.MVIDEO_API_URL; else process.env.MVIDEO_API_URL = было.url;
-    if (было.ключ === undefined) delete process.env.MVIDEO_API_KEY; else process.env.MVIDEO_API_KEY = было.ключ;
   }
 });
 ```
@@ -4958,86 +5199,18 @@ test('артикул продавца и штрихкод подставляют
 
 ## проба/лист.test.js
 
-Строк: 192
+Строк: 124
 
 ```js
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import '../src/tz.js';
-import { изТаблицы } from '../src/http.js';
-import { подставитьКлиент, сохранить } from '../src/sheets.js';
+import { сохранить } from '../src/sheets.js';
 import { СХЕМЫ } from '../src/schemas.js';
+import { поддельнаяКнига, серийно } from './поддельная-книга.js';
 
 const ЛИСТ = 'Возвраты OZON';
 const СХЕМА = СХЕМЫ[ЛИСТ];
-const ДАТА_РУ = /^\d{1,2}\.\d{1,2}\.\d{4}( \d{1,2}:\d{2}(:\d{2})?)?$/;
-const серийно = (г, м, д) => (Date.UTC(г, м - 1, д) - Date.UTC(1899, 11, 30)) / 86400000;
-
-/**
- * Поддельные Таблицы, ведущие себя как настоящие при USER_ENTERED:
- * апостроф снимают и хранят текстом, дату и число разбирают по-своему,
- * а в ответ на чтение апостроф уже НЕ возвращают — на этом и горел код.
- */
-function поддельнаяКнига(начальные = {}) {
-  const книга = new Map(Object.entries(начальные).map(([к, в]) => [к, в.map((р) => [...р])]));
-  const записи = [];
-  const какGoogle = (v) => {
-    if (typeof v !== 'string') return v;
-    if (v.startsWith("'")) return v.slice(1);            // пометка «текст» снимается
-    const t = v.trim();
-    if (ДАТА_РУ.test(t)) {
-      const д = изТаблицы(t);
-      return (Date.UTC(д.getFullYear(), д.getMonth(), д.getDate(),
-        д.getHours(), д.getMinutes(), д.getSeconds()) - Date.UTC(1899, 11, 30)) / 86400000;
-    }
-    const м = t.match(/^(\d{1,4})-(\d{1,2})-(\d{1,2})$/);
-    if (м) { let г = +м[1]; if (г < 100) г += 2000; return серийно(г, +м[2], +м[3]); }
-    if (t !== '' && Number.isFinite(Number(t))) return Number(t);
-    return v;
-  };
-  const вИндекс = (б) => [...б].reduce((а, с) => а * 26 + (с.charCodeAt(0) - 64), 0) - 1;
-  const разбор = (r) => {
-    const м = r.match(/^'(.+?)'!([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/);
-    return { лист: м[1], кол: вИндекс(м[2]), строка: +м[3], до: м[5] ? +м[5] : null };
-  };
-  const положить = (л, стр, кол, зн) => {
-    const в = книга.get(л) || [];
-    зн.forEach((р, i) => {
-      const с = в[стр - 1 + i] || [];
-      р.forEach((з, j) => { с[кол + j] = какGoogle(з); });
-      в[стр - 1 + i] = с;
-    });
-    книга.set(л, в);
-  };
-  подставитьКлиент({ spreadsheets: { values: {
-    async get({ range }) {
-      const { лист, строка, кол, до } = разбор(range);
-      const с = (книга.get(лист) || []).slice(строка - 1, до ?? undefined)
-        .map((р) => [...(р || [])].slice(кол));
-      while (с.length && !(с[с.length - 1] || []).join('')) с.pop();
-      return { data: { values: с } };
-    },
-    async update({ range, requestBody }) {
-      записи.push({ range, values: requestBody.values });
-      const { лист, строка, кол } = разбор(range);
-      положить(лист, строка, кол, requestBody.values);
-    },
-    async batchUpdate({ requestBody }) {
-      for (const д of requestBody.data) {
-        записи.push({ range: д.range, values: д.values });
-        const { лист, строка, кол } = разбор(д.range);
-        положить(лист, строка, кол, д.values);
-      }
-    },
-    async clear({ range }) {
-      const { лист, строка, до } = разбор(range);
-      const в = книга.get(лист) || [];
-      for (let i = строка - 1; i < Math.min(до ?? в.length, в.length); i += 1) в[i] = [];
-      книга.set(лист, в);
-    },
-  } } });
-  return { книга, записи };
-}
 
 const возврат = (н, артикул, статус = 'В пути') => [
   `R${н}`, `П-${н}`, `З-${н}`, 'Fbs', артикул, `110052620${н}`, `Товар ${н}`, 1, 3318,
@@ -5562,7 +5735,7 @@ test('ответ без списка отправлений — ошибка, а
 
 ## scripts/диагностика.mjs
 
-Строк: 242
+Строк: 243
 
 ```js
 /**
@@ -5743,7 +5916,8 @@ const ДЕФЕКТЫ = [
     файл: 'src/mvideo.js', признак: 'if (неПодключено(е)) throw е;',
     цена: 'неподключённая схема выглядит как ошибка в запросе' },
   { n: 49, имя: 'М.Видео: на 401/404 ключ пробуется второй схемой — Bearer, как велит стандарт',
-    файл: 'src/mvideo.js', признак: 'export async function сКлючом',
+    // признак — строка, которой нет в первой (неверной) версии: там решал ответ Bearer
+    файл: 'src/mvideo.js', признак: 'е.статусы[другая] = статусОшибки(е2);',
     цена: 'переход М.Видео на Bearer роняет все задачи М.Видео с 401; «FBO нет» проверено одной схемой ключа' },
   { n: 44, имя: 'Часовой пояс задаётся до любого другого кода',
     файл: 'src/tz.js', признак: 'process.env.TZ = process.env.TZ ||',
