@@ -98,9 +98,9 @@
 
 | Метод | Задача | Строка |
 |---|---|---|
-| `POST /v1/product/stock/info` | остатки: строки своего склада — FBS, склада площадки — FBO | `mvideo.js` |
+| `POST /v1/product/stock/info` | остатки: строки своего склада — FBS, склада площадки — FBO; без FBO-строк — ещё раз с `filter.market_location_ids` (форма FBO, №51) | `mvideo.js` |
 | `POST /v1/order/fbo/list` | заказы FBO по дате изменения | `mvideo.js` |
-| `POST /v1/market/location/list` | имена складов площадки (FBO) | `mvideo.js` |
+| `POST /v1/market/location/list` | склады площадки (FBO): имена и идентификаторы для остатков в форме FBO | `mvideo.js` |
 | `POST /v1/merchant/location/list` | имена FBS-складов | `mvideo.js` |
 | `POST /v1/location/list` | имена DBS-складов | `mvideo.js` |
 | `POST /v1/order/fbs/list` | заказы FBS по дате изменения | `mvideo.js` |
@@ -111,7 +111,8 @@
 Первая страница на «HTTP 400» пробуется в трёх видах тела; прошедший вид запоминается.
 Адресов два (`omni-net.sellers.mvideo.ru`, `api.omniom.ru`), первый ответивший запоминается.
 FBO — по стандарту omninet: заказы `POST /v1/order/fbo/list`, имена складов площадки
-`POST /v1/market/location/list`, остатки — тем же `stock/info`, строками со складом площадки.
+`POST /v1/market/location/list`, остатки — тем же `stock/info`, строками со складом площадки;
+если их нет без фильтра — запросом в форме FBO, с `filter.market_location_ids` по справочнику.
 Подключён ли FBO кабинету, говорит сам шлюз: `400 OPERATION_NOT_SUPPORTED` или 404.
 Ошибка запроса называет адрес в квадратных скобках; запасной адрес помечается в «Результате».
 

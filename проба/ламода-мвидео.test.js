@@ -205,7 +205,8 @@ test('М.Видео: FBO-остатки собираются со складам
     }
     throw new Error(`неожиданный путь ${путь}`);
   };
-  const { строки, складов, безИмени } = await мвОстаткиFboСтроки(вызов);
+  const { строки, складов, безИмени, поФильтру } = await мвОстаткиFboСтроки(вызов);
+  assert.equal(поФильтру, false, 'FBO-строки пришли и без фильтра');
   assert.equal(строки.length, 2, 'строка со своего склада в FBO попасть не должна');
   assert.equal(складов, 2);
   assert.equal(строки[0][0], "'0042", 'артикул с ведущим нулём — текстом');
@@ -239,6 +240,126 @@ test('М.Видео: сбой справочника складов площад
   // 404 или «не подключено» — пережить можно (снимок, имя вернётся следующим прогоном);
   // 500 — нет: это не «метода нет», а сбой, и молчать о нём нельзя
   await assert.rejects(мвОстаткиFboСтроки(вызов), /HTTP 500/);
+});
+
+/* ── №51: остатки FBO спрашиваются и в форме FBO — по складам площадки ── */
+
+const СВОИ_НУЛИ = Array.from({ length: 40 }, (_, i) => ({ product_id: `P${i}`, offer_id: `A${i}`,
+  location_id: 'wh-1', count: 0, available_count: 0 }));
+
+/** Поддельный вызов: остатки без фильтра — FBS, по складам площадки — как скажут. */
+function шлюзОстатков({ склады, поСкладам }) {
+  const звали = [];
+  const вызов = async (путь, тело) => {
+    const фбо = Array.isArray(тело.filter?.market_location_ids);
+    звали.push(`${путь}${фбо ? ` по складам ${тело.filter.market_location_ids.join(',')}` : ''}`
+      + `${'cursor' in тело ? '' : ' без курсора'}`);
+    if (путь === '/v1/market/location/list') {
+      if (склады instanceof Error) throw склады;
+      return { locations: склады };
+    }
+    if (путь === '/v1/product/stock/info') {
+      if (!фбо) return { stocks: СВОИ_НУЛИ };
+      return поСкладам(тело);
+    }
+    throw new Error(`неожиданный путь ${путь}`);
+  };
+  return { вызов, звали };
+}
+const СКЛАДЫ = [{ market_location_id: 'koledino', name: 'Коледино' }, { market_location_id: 'tula', name: 'Тула' }];
+
+test('М.Видео: без фильтра одни строки FBS — остатки спрашиваются по складам площадки, в форме FBO', async () => {
+  const м = await свежийМв('fbo-по-складам');
+  const { вызов, звали } = шлюзОстатков({ склады: СКЛАДЫ, поСкладам: () => ({ stocks: [
+    { offer_id: '0042', market_location_id: 'koledino', count: 7 },
+    { offer_id: 'Б', market_location_id: 'tula', count: 0 }] }) });
+  const { строки, складов, поФильтру } = await м.мвОстаткиFboСтроки(вызов);
+  assert.deepEqual(звали, ['/v1/product/stock/info', '/v1/market/location/list',
+    '/v1/product/stock/info по складам koledino,tula']);
+  assert.equal(строки.length, 1, 'нулевой остаток на складе площадки не пишется');
+  assert.equal(строки[0][0], "'0042");
+  assert.equal(строки[0][1], 'Коледино');
+  assert.equal(складов, 1);
+  assert.equal(поФильтру, true);
+});
+
+test('М.Видео: FBO-остатков нет — ошибка называет и ответ без фильтра, и ответ в форме FBO', async () => {
+  const м = await свежийМв('fbo-нет-почему');
+  // справочника нет (как FBO-заказы на шлюзе М.Видео): в форме FBO спрашивать не по чему
+  const нет = шлюзОстатков({ склады: new Error('М.Видео /v1/market/location/list: HTTP 404 {"error":"Not Found"}'),
+    поСкладам: () => { throw new Error('не должны были спросить'); } });
+  await assert.rejects(м.мвОстаткиFboСтроки(нет.вызов), (е) => {
+    assert.match(е.message, /без фильтра пришло 40: нулевых 40, на складе площадки 0, на своём складе 40/);
+    assert.match(е.message, /справочника складов площадки на шлюзе нет — М\.Видео \/v1\/market\/location\/list: HTTP 404/);
+    assert.match(е.message, /Лист не перезаписан$/);
+    return true;
+  });
+  assert.equal(нет.звали.length, 2);
+  // фильтр шлюз не понял и отдал те же строки FBS — это видно по разбивке
+  const мимо = шлюзОстатков({ склады: СКЛАДЫ, поСкладам: () => ({ stocks: СВОИ_НУЛИ }) });
+  await assert.rejects(м.мвОстаткиFboСтроки(мимо.вызов),
+    /по складам площадки \(2: Коледино, Тула\) — пришло 40: нулевых 40, на складе площадки 0, на своём складе 40/);
+  // FBO не подключён — прямым текстом
+  const ons = шлюзОстатков({ склады: СКЛАДЫ, поСкладам: () => {
+    throw new Error('М.Видео /v1/product/stock/info: HTTP 400 {"code":"OPERATION_NOT_SUPPORTED"}');
+  } });
+  await assert.rejects(м.мвОстаткиFboСтроки(ons.вызов),
+    /по складам площадки \(2\) шлюз ответил OPERATION_NOT_SUPPORTED — FBO для этого кабинета не подключён/);
+  // пустой справочник
+  const пусто = шлюзОстатков({ склады: [], поСкладам: () => { throw new Error('не должны были спросить'); } });
+  await assert.rejects(м.мвОстаткиFboСтроки(пусто.вызов), /складов площадки шлюз не назвал/);
+  // 500 справочника — сбой, а не «складов нет»
+  const сбой = шлюзОстатков({ склады: new Error('М.Видео /v1/market/location/list: HTTP 500 {}'),
+    поСкладам: () => ({ stocks: [] }) });
+  await assert.rejects(м.мвОстаткиFboСтроки(сбой.вызов), /^Error: М\.Видео \/v1\/market\/location\/list: HTTP 500/);
+});
+
+test('М.Видео: 400 на остатках по складам площадки не переучивает вид тела всему методу', async () => {
+  // 400 тут может быть про незнакомый шлюзу фильтр, а не про тело; перебор
+  // видов выучил бы для /v1/product/stock/info вид без курсора, и с ним пошли бы
+  // остатки FBS — ни в чём не виноватые
+  const м = await свежийМв('fbo-вид-тела');
+  const { вызов, звали } = шлюзОстатков({ склады: СКЛАДЫ, поСкладам: (тело) => {
+    if ('cursor' in тело) throw new Error('М.Видео /v1/product/stock/info: HTTP 400 Некорректный запрос');
+    return { stocks: [{ offer_id: 'А', market_location_id: 'koledino', count: 1 }] };
+  } });
+  await assert.rejects(м.мвОстаткиFboСтроки(вызов),
+    /запрос по складам площадки \(2\) не прошёл — М\.Видео \/v1\/product\/stock\/info: HTTP 400/);
+  assert.equal(звали.filter((з) => з.includes('по складам')).length, 1, 'проба перебирала виды тела');
+  await м.мвОбход('/v1/product/stock/info', 'stocks', {}, вызов);
+  assert.equal(звали.at(-1), '/v1/product/stock/info', 'остатки FBS пошли с чужим видом тела');
+});
+
+test('М.Видео, задача: FBO-остатки — как в проде 05.11: без фильтра 40 нулей FBS, справочника нет', async () => {
+  const { поддельнаяКнига } = await import('./поддельная-книга.js');
+  await вОкружении(МВИДЕО, async () => {
+    let справочник = [404, { status: 404, error: 'Not Found', path: '/v1/market/location/list' }];
+    const шлюз = поддельныйШлюз((путь, сх, хост, тело) => {
+      if (сх !== 'api-key') return [404, { status: 404, error: 'Not Found', path: путь }];
+      if (путь === '/v1/market/location/list') return справочник;
+      if (путь === '/v1/product/stock/info') {
+        if (!тело.filter?.market_location_ids) return список('stocks', СВОИ_НУЛИ);
+        return список('stocks', [{ offer_id: 'A7', market_location_id: 'koledino', count: 3 }]);
+      }
+      return [500];
+    });
+    try {
+      const { книга } = поддельнаяКнига({});
+      const м = await свежийМв('fbo-остатки-прод');
+      await assert.rejects(м.мвОстаткиFbo(), (е) => {
+        assert.match(е.message, /без фильтра пришло 40: нулевых 40/);
+        assert.match(е.message, /справочника складов площадки на шлюзе нет — .*HTTP 404/);
+        return true;
+      });
+      assert.equal(книга.get('FBO остатки Мвидео'), undefined);
+      // справочник появился — остатки в форме FBO пишутся, и «Результат» это говорит
+      справочник = список('locations', [{ market_location_id: 'koledino', name: 'Коледино' }]);
+      assert.match(await м.мвОстаткиFbo(), /^складов площадки 1, строк 1, по фильтру складов площадки$/);
+      assert.ok((книга.get('FBO остатки Мвидео') || []).some((р) => String(р[0]).includes('A7')));
+    } finally {
+      шлюз.вернуть();
+    }
+  });
 });
 
 // ─────────────────── Ламода: карточки заказов ───────────────────
@@ -694,7 +815,7 @@ function поддельныйШлюз(ответить) {
     const з = опции.headers;
     const сх = з.Authorization && з['api-key'] ? 'оба' : (з.Authorization ? 'Bearer' : 'api-key');
     звали.push(`${u.host}${u.pathname} ${сх}`);
-    const [статус, тело] = ответить(u.pathname, сх, u.host);
+    const [статус, тело] = ответить(u.pathname, сх, u.host, JSON.parse(опции.body || '{}'));
     return new Response(JSON.stringify(тело ?? { message: `ответ ${статус} на ${сх}` }),
       { status: статус, headers: { 'content-type': 'application/json' } });
   };
