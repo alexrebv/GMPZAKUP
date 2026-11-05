@@ -1313,6 +1313,40 @@ test('М.Видео: при уходе на запасной адрес спра
   });
 });
 
+test('М.Видео: при уходе на запасной адрес решает ответ запасного, а не «до этого»', async () => {
+  // находка шестой проверки: у ошибки после ухода не было решающего текста, и
+  // слова из ответа шлюза М.Видео (теперь до 600 знаков) решали на omniom
+  const тело = { message: `${'м'.repeat(100)} конфигурации`, code: 'OPERATION_NOT_SUPPORTED', note: 'HTTP 400' };
+  for (const [omniom, ждём] of [['400-потом-данные', 'данные'], ['500', 'одна попытка тела']]) {
+    await вОкружении(undefined, async () => {
+      const шлюз = поддельныйШлюз((путь, сх, хост) => {
+        if (хост !== 'api.omniom.ru') return сх === 'api-key' ? [404, тело] : [500];
+        if (omniom === '500') return [500];
+        return шлюз.звали.filter((з) => з.startsWith('api.omniom.ru')).length === 1
+          ? [400] : список('mappings', [{ offer_id: 'A1', product_id: 'P1' }]);
+      });
+      try {
+        const м = await свежийМв(`до-этого-${omniom}`);
+        if (ждём === 'данные') {
+          assert.deepEqual(await безПауз(() => м.мвОбход('/v1/product/mapping/list', 'mappings')),
+            [{ offer_id: 'A1', product_id: 'P1' }]);
+        } else {
+          await безПауз(() => assert.rejects(м.мвОбход('/v1/product/mapping/list', 'mappings'), (е) => {
+            assert.match(е.message, /HTTP 500 .*\[api\.omniom\.ru\]; до этого: /);
+            assert.equal(м.статусОшибки(е), 500);
+            assert.ok(!м.неПодключено(е), е.message);
+            return true;
+          }));
+          // 500 на omniom — не повод перебирать виды тела: «HTTP 400» был в «до этого»
+          assert.equal(шлюз.звали.filter((з) => з.startsWith('api.omniom.ru')).length, 2);
+        }
+      } finally {
+        шлюз.вернуть();
+      }
+    });
+  }
+});
+
 test('М.Видео: при уходе на запасной адрес ответ Bearer шлюза М.Видео остаётся в ошибке', async () => {
   // два адреса (MVIDEO_API_URL не задан): ответ М.Видео пишется в «до этого»,
   // и раньше его обрезали до 120 знаков — от ответа Bearer не оставалось ничего
